@@ -38,7 +38,7 @@
 <body>
 <div id="hud">❤️ <div id="hpbar"><div id="hpfill"></div></div><span id="hpnum">100</span> · ⚔️ <span id="kills">0</span> kills · streak <span id="streak">0</span></div>
 <div id="feedback"></div>
-<div id="help">VR: swing from the shoulder · hold BOTH grips 1s to reload · Desktop: drag mouse fast across the enemy (R reloads) · Big clean arcs = damage · Wiggling inside = 0 dmg</div>
+<div id="help">VR: left stick move · right stick snap-turn · swing from the shoulder · hold BOTH grips 1s to reload · Desktop: WASD + drag mouse to swing (R reloads) · Clean arcs = damage · Flail = 0 dmg</div>
 <div id="credit">Sword: <a href="https://polyfork.dev/asset/sword-11907e">polyfork.dev sword-11907e</a> (free, no attribution required)</div>
 
 <script type="module">
@@ -57,8 +57,12 @@ document.body.appendChild(VRButton.createButton(renderer));
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0a0f);
 scene.fog = new THREE.Fog(0x0a0a0f, 6, 18);
+// locomotion rig: camera + controllers live here so the thumbsticks can move you
+const rig = new THREE.Group();
+scene.add(rig);
 const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.05, 60);
 camera.position.set(0, 1.6, 1.6);
+rig.add(camera);
 
 scene.add(new THREE.HemisphereLight(0x8888ff, 0x221122, 0.9));
 const sun = new THREE.DirectionalLight(0xffffff, 1.4);
@@ -180,6 +184,13 @@ function grabSword(e) {
 }
 ctrlR.addEventListener('connected', grabSword);
 ctrlL.addEventListener('connected', grabSword);
+rig.add(ctrlR, ctrlL);
+// leaving VR: hand the sword back to the desktop anchor pose
+renderer.xr.addEventListener('sessionend', () => {
+  scene.add(swordAnchor);
+  swordAnchor.position.set(0.25, 1.4, 0.9);
+  swordAnchor.rotation.set(0, 0, 0);
+});
 scene.add(ctrlR, ctrlL);
 
 // Desktop fallback: drag mouse to swing sword
@@ -403,10 +414,69 @@ function checkReload(now) {
 }
 addEventListener('keydown', (e) => { if (e.key === 'r' || e.key === 'R') location.reload(); });
 
+// ---------- locomotion: left stick smooth move, right stick snap turn ----------
+// desktop: WASD / arrows
+const keys = {};
+addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
+addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+
+const _fwd = new THREE.Vector3(), _strafe = new THREE.Vector3(), _mv = new THREE.Vector3();
+let snapArmed = true;
+const ARENA_R = 4, MOVE_SPEED = 2.4;
+function clampArena() {
+  const r = Math.hypot(rig.position.x, rig.position.z);
+  if (r > ARENA_R) { rig.position.x *= ARENA_R / r; rig.position.z *= ARENA_R / r; }
+}
+function locomotion(dt) {
+  const session = renderer.xr.getSession();
+  if (session) {
+    for (const src of session.inputSources) {
+      const gp = src.gamepad;
+      if (!gp || gp.axes.length < 2) continue;
+      const n = gp.axes.length;
+      const sx = gp.axes[n - 2], sy = gp.axes[n - 1]; // thumbstick is the last pair
+      if (src.handedness === 'left') {
+        const mag = Math.hypot(sx, sy);
+        if (mag > 0.2) {
+          camera.getWorldDirection(_fwd); _fwd.y = 0;
+          if (_fwd.lengthSq() < 1e-6) _fwd.set(0, 0, -1); else _fwd.normalize();
+          _strafe.set(-_fwd.z, 0, _fwd.x);
+          _mv.set(0, 0, 0).addScaledVector(_fwd, -sy).addScaledVector(_strafe, sx).normalize();
+          rig.position.addScaledVector(_mv, MOVE_SPEED * dt * Math.min(1, mag));
+          clampArena();
+        }
+      } else if (src.handedness === 'right') {
+        if (Math.abs(sx) > 0.7 && snapArmed) {
+          rig.rotation.y -= Math.PI / 4 * Math.sign(sx); // 45° snap
+          snapArmed = false;
+        } else if (Math.abs(sx) < 0.3) snapArmed = true;
+      }
+    }
+  } else {
+    // desktop WASD/arrows, camera-relative on XZ
+    _fwd.set(0, 0, -1).applyQuaternion(camera.quaternion); _fwd.y = 0; _fwd.normalize();
+    _strafe.set(-_fwd.z, 0, _fwd.x);
+    _mv.set(0, 0, 0);
+    if (keys['w'] || keys['arrowup']) _mv.add(_fwd);
+    if (keys['s'] || keys['arrowdown']) _mv.sub(_fwd);
+    if (keys['d'] || keys['arrowright']) _mv.add(_strafe);
+    if (keys['a'] || keys['arrowleft']) _mv.sub(_strafe);
+    if (_mv.lengthSq() > 0) {
+      _mv.normalize();
+      rig.position.addScaledVector(_mv, MOVE_SPEED * dt);
+      clampArena();
+    }
+  }
+}
+
 // ---------- loop ----------
 refreshHud('swing to fight');
+let lastT = performance.now();
 renderer.setAnimationLoop(() => {
   const now = performance.now();
+  const dt = Math.min(0.1, (now - lastT) / 1000);
+  lastT = now;
+  locomotion(dt);
   checkReload(now);
   // idle enemy bob (skip while dead)
   if (!deadUntil) enemy.position.y = Math.sin(now * 0.0012) * 0.03;
