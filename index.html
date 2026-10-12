@@ -3,90 +3,399 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>vr_game — basic VR shooter</title>
-<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<title>vr_game — sword fight</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #0a0a0f; font-family: system-ui, sans-serif; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0a0f; font-family: system-ui, sans-serif; }
+  canvas { display: block; }
   #hud {
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-    display: flex; gap: 12px; align-items: center; z-index: 10;
-    background: rgba(0,0,0,.6); color: #fff; padding: 8px 16px; border-radius: 999px;
-    font-weight: 600; user-select: none;
+    display: flex; gap: 14px; align-items: center; z-index: 10;
+    background: rgba(0,0,0,.65); color: #fff; padding: 8px 18px;
+    border-radius: 999px; font-weight: 700; user-select: none; white-space: nowrap;
   }
-  #hud button {
-    border: 0; border-radius: 999px; padding: 6px 14px; font-weight: 700; cursor: pointer;
+  #hpbar { width: 110px; height: 8px; background: #333; border-radius: 4px; overflow: hidden; }
+  #hpfill { height: 100%; width: 100%; background: #4ade80; transition: width .15s; }
+  #feedback {
+    position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+    font-weight: 800; font-size: 20px; z-index: 10; opacity: 0;
+    transition: opacity .2s; text-shadow: 0 2px 12px #000; pointer-events: none;
   }
   #help {
     position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
     color: #9999ad; font-size: 13px; z-index: 10; text-align: center;
-    background: rgba(0,0,0,.5); padding: 6px 14px; border-radius: 8px;
+    background: rgba(0,0,0,.55); padding: 6px 14px; border-radius: 8px; max-width: 92vw;
   }
+  #credit { position: fixed; bottom: 12px; right: 12px; color: #55556a; font-size: 11px; z-index: 10; }
+  #credit a { color: #77778c; }
 </style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
 </head>
 <body>
-<div id="hud">
-  <span>🎯 <span id="score">0</span></span>
-  <button id="reset">Reset</button>
-</div>
-<div id="help">Desktop: drag to look, WASD to move, click targets &nbsp;•&nbsp; VR: hit “Enter VR”, point &amp; trigger</div>
+<div id="hud">❤️ <div id="hpbar"><div id="hpfill"></div></div><span id="hpnum">100</span> · ⚔️ <span id="kills">0</span> kills · streak <span id="streak">0</span></div>
+<div id="feedback"></div>
+<div id="help">VR: grab controller, swing from the shoulder · Desktop: drag mouse fast across the enemy · Big clean arcs = damage · Wiggling inside = 0 dmg</div>
+<div id="credit">Sword: <a href="https://polyfork.dev/asset/sword-11907e">polyfork.dev sword-11907e</a> (free, no attribution required)</div>
 
-<a-scene>
-  <a-sky color="#0a0a0f"></a-sky>
-  <a-plane position="0 0 0" rotation="-90 0 0" width="40" height="40" color="#1a1a24"></a-plane>
-  <a-grid material="color: #33334d" position="0 0.01 0"></a-grid>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
 
-  <a-text id="scoreText" value="Score: 0" position="0 3 -4" align="center" width="8"></a-text>
+// ---------- renderer / scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+document.body.appendChild(VRButton.createButton(renderer));
 
-  <a-entity id="rig" position="0 1.6 4">
-    <a-camera wasd-controls look-controls>
-      <a-cursor raycaster="objects: .target" color="#fff"></a-cursor>
-    </a-camera>
-    <a-entity laser-controls="hand: left" raycaster="objects: .target"></a-entity>
-    <a-entity laser-controls="hand: right" raycaster="objects: .target"></a-entity>
-  </a-entity>
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a0f);
+scene.fog = new THREE.Fog(0x0a0a0f, 6, 18);
+const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.05, 60);
+camera.position.set(0, 1.6, 1.6);
 
-  <a-entity id="targets"></a-entity>
-</a-scene>
+scene.add(new THREE.HemisphereLight(0x8888ff, 0x221122, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(3, 6, 2);
+scene.add(sun);
 
-<script>
-  const targetsEl = document.getElementById('targets');
-  const scoreEl = document.getElementById('score');
-  const scoreText = document.getElementById('scoreText');
-  let score = 0;
-  const COUNT = 6;
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(9, 48),
+  new THREE.MeshStandardMaterial({ color: 0x14141d, roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+scene.add(new THREE.GridHelper(18, 36, 0x444466, 0x262633));
 
-  function setScore(n) {
-    score = n;
-    scoreEl.textContent = n;
-    scoreText.setAttribute('value', 'Score: ' + n);
+// ---------- enemy ----------
+const ENEMY_POS = new THREE.Vector3(0, 0, -1.7);
+const BODY_C = new THREE.Vector3(0, 1.35, -1.7), BODY_R = 0.55;
+const CORE_C = new THREE.Vector3(0, 1.35, -1.18), CORE_R = 0.26;
+
+const enemy = new THREE.Group();
+enemy.position.copy(ENEMY_POS);
+const bodyMat = new THREE.MeshStandardMaterial({ color: 0x5b6b8c, roughness: 0.6, metalness: 0.3 });
+const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.55, 6, 16), bodyMat);
+body.position.y = 1.35;
+const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 24, 18), bodyMat.clone());
+head.position.y = 2.05;
+const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff3344 });
+for (const s of [-1, 1]) {
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), eyeMat);
+  eye.position.set(0.1 * s, 2.08, 0.22);
+  enemy.add(eye);
+}
+const core = new THREE.Mesh(
+  new THREE.SphereGeometry(CORE_R, 20, 14),
+  new THREE.MeshStandardMaterial({ color: 0xffb020, emissive: 0xcc6600, emissiveIntensity: 1.2 })
+);
+core.position.set(0, 1.35, 0.52); // local -> world CORE_C
+enemy.add(body, head, core);
+scene.add(enemy);
+
+// floating HP / message label (visible in VR too)
+const labelCanvas = document.createElement('canvas');
+labelCanvas.width = 512; labelCanvas.height = 160;
+const lctx = labelCanvas.getContext('2d');
+const labelTex = new THREE.CanvasTexture(labelCanvas);
+const label = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.3, 0.4),
+  new THREE.MeshBasicMaterial({ map: labelTex, transparent: true })
+);
+label.position.set(0, 2.65, -1.7);
+scene.add(label);
+function drawLabel(line1, line2 = '', color = '#fff') {
+  lctx.clearRect(0, 0, 512, 160);
+  lctx.textAlign = 'center';
+  lctx.fillStyle = '#000a';
+  lctx.fillRect(60, 8, 392, 144);
+  lctx.fillStyle = color;
+  lctx.font = 'bold 56px system-ui';
+  lctx.fillText(line1, 256, 75);
+  lctx.font = 'bold 34px system-ui';
+  lctx.fillStyle = '#ddd';
+  lctx.fillText(line2, 256, 125);
+  labelTex.needsUpdate = true;
+}
+
+// ---------- sword rig ----------
+const swordAnchor = new THREE.Group(); // grip point; blade extends -Z
+scene.add(swordAnchor);
+const tipObj = new THREE.Object3D();
+const baseObj = new THREE.Object3D();
+swordAnchor.add(baseObj);
+tipObj.position.set(0, 0, -0.95); // adjusted after model load
+swordAnchor.add(tipObj);
+swordAnchor.position.set(0.25, 1.4, 0.9);
+
+let bladeLen = 0.95;
+function buildFallbackSword() {
+  const g = new THREE.Group();
+  const steel = new THREE.MeshStandardMaterial({ color: 0xc9d4e8, metalness: 0.9, roughness: 0.25 });
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.05, 0.8), steel);
+  blade.position.z = -0.5;
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.04, 0.05),
+    new THREE.MeshStandardMaterial({ color: 0x8a6b2f, metalness: 0.8, roughness: 0.4 }));
+  guard.position.z = -0.08;
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.028, 0.22, 12),
+    new THREE.MeshStandardMaterial({ color: 0x3a2415, roughness: 0.9 }));
+  grip.rotation.x = Math.PI / 2; grip.position.z = 0.05;
+  g.add(blade, guard, grip);
+  return g;
+}
+new GLTFLoader().load('./models/sword.glb', (gltf) => {
+  const m = gltf.scene;
+  const box = new THREE.Box3().setFromObject(m);
+  const size = box.getSize(new THREE.Vector3());
+  const s = 0.95 / Math.max(size.x, size.y, size.z);
+  m.scale.setScalar(s);
+  // recenter: grip at origin, blade toward -Z. Model is Y-up; lay it forward.
+  const c = box.getCenter(new THREE.Vector3());
+  m.position.sub(c.multiplyScalar(s));
+  const holder = new THREE.Group();
+  holder.add(m);
+  m.rotation.x = -Math.PI / 2; // Y-up blade -> -Z
+  swordAnchor.add(holder);
+  bladeLen = 0.95;
+  tipObj.position.set(0, 0, -bladeLen);
+}, undefined, () => swordAnchor.add(buildFallbackSword()));
+
+// VR controllers — sword follows right hand in VR
+const ctrlR = renderer.xr.getController(0);
+const ctrlL = renderer.xr.getController(1);
+function grabSword(e) {
+  if (e.data.handedness === 'right') {
+    e.target.add(swordAnchor);
+    swordAnchor.position.set(0, 0, 0);
+    swordAnchor.rotation.set(0, 0, 0);
+  }
+  initAudio();
+}
+ctrlR.addEventListener('connected', grabSword);
+ctrlL.addEventListener('connected', grabSword);
+scene.add(ctrlR, ctrlL);
+
+// Desktop fallback: drag mouse to swing sword
+let dragging = false, px = 0, py = 0;
+addEventListener('pointerdown', (e) => { dragging = true; px = e.clientX; py = e.clientY; initAudio(); });
+addEventListener('pointerup', () => dragging = false);
+addEventListener('pointermove', (e) => {
+  if (renderer.xr.isPresenting || !dragging) return;
+  const dx = (e.clientX - px) / innerHeight, dy = (e.clientY - py) / innerHeight;
+  px = e.clientX; py = e.clientY;
+  swordAnchor.position.x = THREE.MathUtils.clamp(swordAnchor.position.x + dx * 2.2, -1.2, 1.2);
+  swordAnchor.position.y = THREE.MathUtils.clamp(swordAnchor.position.y - dy * 2.2, 0.4, 2.4);
+  swordAnchor.position.z = 0.9;
+  swordAnchor.rotation.y = THREE.MathUtils.clamp(swordAnchor.rotation.y + dx * 4, -1, 1);
+});
+
+// ---------- audio (tiny synth) ----------
+let AC = null;
+function initAudio() { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); }
+function whoosh(speed) {
+  if (!AC) return;
+  const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(180 + speed * 60, t);
+  o.frequency.exponentialRampToValueAtTime(90, t + 0.18);
+  g.gain.setValueAtTime(0.08, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  o.connect(g).connect(AC.destination);
+  o.start(t); o.stop(t + 0.22);
+}
+function thud() {
+  if (!AC) return;
+  const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(140, t);
+  o.frequency.exponentialRampToValueAtTime(50, t + 0.15);
+  g.gain.setValueAtTime(0.25, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  o.connect(g).connect(AC.destination);
+  o.start(t); o.stop(t + 0.22);
+}
+function buzz() {
+  if (!AC) return;
+  const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'square'; o.frequency.setValueAtTime(110, t);
+  g.gain.setValueAtTime(0.12, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+  o.connect(g).connect(AC.destination);
+  o.start(t); o.stop(t + 0.32);
+}
+
+// ---------- game state ----------
+let hp = 100, kills = 0, bestStreak = 0, streak = 0, flailStreak = 0;
+let punishUntil = 0, enrageUntil = 0, deadUntil = 0;
+let wasOutsideSinceHit = true;
+const hpnum = document.getElementById('hpnum');
+const hpfill = document.getElementById('hpfill');
+const killsEl = document.getElementById('kills');
+const streakEl = document.getElementById('streak');
+const fbEl = document.getElementById('feedback');
+let fbTimer = 0;
+function feedback(text, color) {
+  fbEl.textContent = text;
+  fbEl.style.color = color;
+  fbEl.style.opacity = 1;
+  clearTimeout(fbTimer);
+  fbTimer = setTimeout(() => fbEl.style.opacity = 0, 1100);
+}
+function refreshHud(msg = '', color = '#fff') {
+  hpnum.textContent = Math.max(0, Math.round(hp));
+  hpfill.style.width = Math.max(0, hp) + '%';
+  hpfill.style.background = hp > 50 ? '#4ade80' : hp > 25 ? '#facc15' : '#f87171';
+  killsEl.textContent = kills;
+  streakEl.textContent = streak;
+  drawLabel(`HP ${Math.max(0, Math.round(hp))}`, msg, color);
+}
+function damage(amount, where, clean, peak) {
+  hp -= amount;
+  streak++; bestStreak = Math.max(bestStreak, streak);
+  flailStreak = 0;
+  thud();
+  pulseHaptics(0.9, 120);
+  // knockback shove
+  enemy.position.z = ENEMY_POS.z - 0.12;
+  setTimeout(() => enemy.position.z = ENEMY_POS.z, 120);
+  bodyMat.emissive = new THREE.Color(0xff2222);
+  bodyMat.emissiveIntensity = 0.9;
+  setTimeout(() => bodyMat.emissiveIntensity = 0, 120);
+  feedback(`${clean ? 'CLEAN HIT' : 'hit'} −${Math.round(amount)}${where === 'core' ? ' CORE!' : ''}`, clean ? '#4ade80' : '#facc15');
+  if (hp <= 0) {
+    kills++;
+    feedback(`KILL! (${kills})`, '#4ade80');
+    enemy.rotation.x = -1.2; // fall over
+    deadUntil = performance.now() + 2000;
+    hp = 0;
+  }
+  refreshHud(clean ? `-${Math.round(amount)} @ ${peak.toFixed(1)} m/s` : 'weak — swing bigger', clean ? '#4ade80' : '#facc15');
+}
+function punish(reason) {
+  flailStreak++;
+  streak = 0;
+  buzz();
+  pulseHaptics(0.3, 200);
+  punishUntil = performance.now() + 600;
+  if (flailStreak >= 3) {
+    enrageUntil = performance.now() + 2000;
+    flailStreak = 0;
+    eyeMat.color.set(0xff00ff);
+    setTimeout(() => eyeMat.color.set(0xff3344), 2000);
+    feedback('ENRAGED — stop flailing!', '#f87171');
+    refreshHud('ENRAGED — immune 2s', '#f87171');
+  } else {
+    feedback(reason, '#f87171');
+    refreshHud(reason, '#f87171');
+  }
+}
+function pulseHaptics(intensity, ms) {
+  try {
+    const gp = [...navigator.getGamepads()].find(g => g && g.hapticActuators?.length);
+    gp?.hapticActuators[0].pulse(intensity, ms);
+  } catch {}
+}
+
+// ---------- swing tracking (the anti-flail core) ----------
+const tipPrev = new THREE.Vector3();
+const velPrev = new THREE.Vector3();
+let tipInit = false;
+let swinging = false, swingT0 = 0, lowT0 = 0;
+let path = [], peakPerp = 0, reversals = 0, insideDwell = 0;
+
+const _tip = new THREE.Vector3(), _base = new THREE.Vector3(), _blade = new THREE.Vector3();
+function segHitsSphere(a, b, c, r) {
+  const ab = new THREE.Vector3().subVectors(b, a);
+  const t = THREE.MathUtils.clamp(new THREE.Vector3().subVectors(c, a).dot(ab) / ab.lengthSq(), 0, 1);
+  return new THREE.Vector3().copy(a).addScaledVector(ab, t).distanceTo(c) <= r;
+}
+function evaluateSwing(now) {
+  const dur = (now - swingT0) / 1000;
+  let arc = 0;
+  for (let i = 1; i < path.length; i++) arc += path[i].p.distanceTo(path[i - 1].p);
+  // did the arc pass through the enemy?
+  let hitWhere = null;
+  for (let i = 1; i < path.length; i++) {
+    if (segHitsSphere(path[i - 1].p, path[i].p, CORE_C, CORE_R + 0.1)) { hitWhere = 'core'; break; }
+    if (segHitsSphere(path[i - 1].p, path[i].p, BODY_C, BODY_R)) hitWhere = 'body';
+  }
+  if (!hitWhere) return; // clean whiff — no penalty, no reward
+  if (!wasOutsideSinceHit) return punish('STUCK INSIDE — pull out!');
+  if (now < punishUntil || now < enrageUntil || now < deadUntil) return;
+  wasOutsideSinceHit = false;
+
+  const flail = reversals >= 4 || (reversals >= 3 && arc < 0.9) || (insideDwell > 0.5 && reversals >= 2);
+  if (flail) return punish('FLAIL! 0 dmg — one clean arc');
+
+  const clean = arc >= 0.5 && dur >= 0.12 && dur <= 1.2 && reversals <= 2 && peakPerp >= 2.0;
+  whoosh(peakPerp);
+  if (clean) {
+    const dmg = Math.min(24, 6 + peakPerp * 2.2) * (hitWhere === 'core' ? 1.5 : 1);
+    damage(dmg, hitWhere, true, peakPerp);
+  } else {
+    damage(2 + Math.random() * 2, hitWhere, false, peakPerp);
+  }
+}
+
+function trackSword(now) {
+  tipObj.getWorldPosition(_tip);
+  baseObj.getWorldPosition(_base);
+  if (!tipInit) { tipPrev.copy(_tip); tipInit = true; return; }
+  const step = 1 / 60; // fixed timestep estimate for swing metrics
+  const vel = new THREE.Vector3().subVectors(_tip, tipPrev).divideScalar(step);
+  _blade.subVectors(_tip, _base).normalize();
+  const along = vel.clone().addScaledVector(_blade, -vel.dot(_blade));
+  const perpSpeed = along.length();
+  const speed = vel.length();
+
+  const inside = _tip.distanceTo(BODY_C) < BODY_R + 0.05;
+  if (!inside) wasOutsideSinceHit = true;
+  if (deadUntil && now > deadUntil) { // respawn
+    deadUntil = 0; hp = 100; enemy.rotation.x = 0; refreshHud('fresh opponent');
   }
 
-  function randomPos() {
-    const a = Math.random() * Math.PI * 2;
-    const r = 2.5 + Math.random() * 4;
-    return { x: Math.cos(a) * r, y: 0.8 + Math.random() * 2.5, z: Math.sin(a) * r - 1 };
+  if (!swinging && perpSpeed > 1.2 && speed < 14) {
+    swinging = true; swingT0 = now; lowT0 = 0;
+    path = [{ p: _tip.clone() }]; peakPerp = perpSpeed; reversals = 0; insideDwell = 0;
+    velPrev.copy(vel);
+  } else if (swinging) {
+    path.push({ p: _tip.clone() });
+    peakPerp = Math.max(peakPerp, perpSpeed);
+    if (inside) insideDwell += step;
+    if (vel.lengthSq() > 0.04 && velPrev.lengthSq() > 0.04) {
+      const ang = vel.angleTo(velPrev);
+      if (ang > 1.75) reversals++; // >100° direction flip
+      velPrev.copy(vel);
+    }
+    if (perpSpeed < 0.7) {
+      if (!lowT0) lowT0 = now;
+      if (now - lowT0 > 80) { swinging = false; evaluateSwing(now); }
+    } else lowT0 = 0;
+    if (now - swingT0 > 1500) { swinging = false; evaluateSwing(now); } // timeout
   }
+  tipPrev.copy(_tip);
+}
 
-  function spawn(i) {
-    const p = randomPos();
-    const el = document.createElement('a-sphere');
-    el.classList.add('target');
-    el.setAttribute('position', `${p.x} ${p.y} ${p.z}`);
-    el.setAttribute('radius', '0.3');
-    el.setAttribute('color', `hsl(${Math.random() * 360}, 80%, 60%)`);
-    el.setAttribute('animation', 'property: scale; to: 1.15 1.15 1.15; dir: alternate; dur: 800; loop: true');
-    el.addEventListener('click', () => {
-      setScore(score + 1);
-      // pop effect then respawn
-      const q = randomPos();
-      el.setAttribute('position', `${q.x} ${q.y} ${q.z}`);
-      el.setAttribute('color', `hsl(${Math.random() * 360}, 80%, 60%)`);
-    });
-    targetsEl.appendChild(el);
-  }
-
-  for (let i = 0; i < COUNT; i++) spawn(i);
-  document.getElementById('reset').onclick = () => setScore(0);
+// ---------- loop ----------
+refreshHud('swing to fight');
+renderer.setAnimationLoop(() => {
+  const now = performance.now();
+  // idle enemy bob (skip while dead)
+  if (!deadUntil) enemy.position.y = Math.sin(now * 0.0012) * 0.03;
+  core.material.emissiveIntensity = 1 + Math.sin(now * 0.005) * 0.5;
+  trackSword(now);
+  renderer.render(scene, camera);
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
 </script>
 </body>
 </html>
