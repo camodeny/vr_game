@@ -3,34 +3,40 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>vr_game — sword fight + mechanics lab</title>
+<title>vr_game — Cadence</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0a0f; font-family: system-ui, sans-serif; }
   canvas { display: block; }
   #hud {
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-    display: flex; gap: 12px; align-items: center; z-index: 10;
-    background: rgba(0,0,0,.65); color: #fff; padding: 8px 16px;
+    display: flex; gap: 14px; align-items: center; z-index: 10;
+    background: rgba(0,0,0,.7); color: #fff; padding: 8px 18px;
     border-radius: 999px; font-weight: 700; user-select: none; white-space: nowrap; font-size: 14px;
   }
+  #beatdot { width: 12px; height: 12px; border-radius: 50%; background: #4ade80; transition: none; }
   #hpbar { display: inline-block; vertical-align: middle; width: 90px; height: 8px; background: #333; border-radius: 4px; overflow: hidden; }
-  #hpfill { height: 100%; width: 100%; background: #4ade80; transition: width .15s; }
-  #hud button { border: 0; border-radius: 999px; padding: 5px 12px; font-weight: 700; cursor: pointer; background: #fff; }
+  #hpfill { display: block; height: 100%; width: 100%; background: #4ade80; }
+  #cadbar { display: inline-block; vertical-align: middle; width: 110px; height: 8px; background: #333; border-radius: 4px; overflow: hidden; }
+  #cadfill { display: block; height: 100%; width: 0%; background: #38bdf8; }
   #feedback {
-    position: fixed; top: 58px; left: 50%; transform: translateX(-50%);
+    position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
     font-weight: 800; font-size: 19px; z-index: 10; opacity: 0;
     transition: opacity .2s; text-shadow: 0 2px 12px #000; pointer-events: none; text-align: center;
   }
-  #mech { position: fixed; top: 92px; left: 50%; transform: translateX(-50%); z-index: 10; color: #7dd3fc; font-size: 13px; font-weight: 600; }
+  #combo {
+    position: fixed; top: 88px; left: 50%; transform: translateX(-50%);
+    z-index: 10; font-weight: 900; font-size: 30px; color: #facc15;
+    text-shadow: 0 2px 14px #000; opacity: .25; transition: opacity .15s;
+  }
   #help {
     position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
-    color: #9999ad; font-size: 12px; z-index: 10; text-align: center;
-    background: rgba(0,0,0,.55); padding: 6px 14px; border-radius: 8px; max-width: 94vw;
+    color: #9a9ab0; font-size: 12px; z-index: 10; text-align: center;
+    background: rgba(0,0,0,.6); padding: 6px 16px; border-radius: 8px; max-width: 94vw; line-height: 1.5;
   }
-  #credit { position: fixed; bottom: 12px; right: 12px; color: #4a4a5c; font-size: 10px; z-index: 10; }
+  #help b { color: #e8e8ef; }
   #vignette {
     position: fixed; inset: 0; z-index: 5; pointer-events: none; opacity: 0;
-    transition: opacity .25s; background: radial-gradient(circle, transparent 35%, rgba(20,40,90,.75) 100%);
+    transition: opacity .2s; background: radial-gradient(circle, transparent 40%, rgba(120,20,20,.7) 100%);
   }
 </style>
 <script type="importmap">
@@ -42,23 +48,44 @@
 </head>
 <body>
 <div id="hud">
-  <span id="wield">🖥️</span>
-  <button id="modeBtn">🎛️ Lab</button>
-  <button id="prev" style="display:none">◀</button>
-  <button id="next" style="display:none">▶</button>
-  <span id="mechNo" style="display:none"></span>
-  <span id="fightStats">❤️ <span id="hpbar"><span id="hpfill" style="display:block"></span></span> <span id="hpnum">100</span> · ⚔️ <span id="kills">0</span> · streak <span id="streak">0</span></span>
+  <span id="beatdot"></span>
+  <span>❤️ <span id="hpbar"><span id="hpfill"></span></span></span>
+  <span>⚡ <span id="cadbar"><span id="cadfill"></span></span></span>
+  <span id="elem">🔥 Fire</span>
+  <span>⚔️ <span id="kills">0</span></span>
 </div>
 <div id="feedback"></div>
-<div id="mech"></div>
+<div id="combo"></div>
 <div id="vignette"></div>
-<div id="help">left stick move · right stick turn (lab: cycle) · BOTH grips 1s = reload · desktop: WASD, drag mouse, [ ] cycle, L lab</div>
-<div id="credit">Sword: polyfork.dev sword-11907e</div>
+<div id="help">
+  <b>Stay on the beat.</b> On-beat hits build <b>Cadence ⚡</b> and combo · heavy on-beat swing spends ⚡ for a <b>beam</b><br>
+  off-hand <b>trigger = pull</b>, <b>grip = push</b> (interrupts) · <b>right grip = cycle element</b> · both grips 1s = reload<br>
+  desktop: WASD · drag to swing · <b>E</b> element · <b>Q</b> pull · <b>F</b> push
+</div>
 
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
+
+// ============================================================
+// tuning
+// ============================================================
+const BPM = 96;
+const BEAT = 60 / BPM;          // seconds per beat (~0.625)
+const ONBEAT = 0.14;            // +/- seconds counted as "on beat"
+const CAD_MAX = 100;
+const CAD_DECAY = 5;            // per second
+const COST = { beam: 25, force: 15, elem: 10 };
+const GAIN = { melee: 14, beam: 10, force: 6 };
+const MELEE_DMG = 11, BEAM_DMG = 17;
+const ENEMY_HP = 42, ENEMY_DMG = 10, REACH = 1.7;
+const WARMUP_BEATS = 4;
+const ELEMENTS = [
+  { id: 'fire', name: '🔥 Fire', color: 0xff6600, hex: '#fb923c' },
+  { id: 'ice', name: '❄️ Ice', color: 0x66ccff, hex: '#7dd3fc' },
+  { id: 'chain', name: '⚡ Chain', color: 0xffff66, hex: '#fde047' },
+];
 
 // ============================================================
 // renderer / scene
@@ -72,7 +99,7 @@ document.body.appendChild(VRButton.createButton(renderer));
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0a0f);
-scene.fog = new THREE.Fog(0x0a0a0f, 7, 20);
+scene.fog = new THREE.Fog(0x0a0a0f, 8, 22);
 
 const rig = new THREE.Group();
 scene.add(rig);
@@ -81,25 +108,17 @@ camera.position.set(0, 1.6, 0);
 rig.add(camera);
 
 scene.add(new THREE.HemisphereLight(0x8899ff, 0x221122, 0.9));
-const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+const sun = new THREE.DirectionalLight(0xffffff, 1.35);
 sun.position.set(3, 6, 2);
 scene.add(sun);
 
-const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(10, 48),
-  new THREE.MeshStandardMaterial({ color: 0x14141d, roughness: 1 })
-);
+const ground = new THREE.Mesh(new THREE.CircleGeometry(11, 48), new THREE.MeshStandardMaterial({ color: 0x14141d, roughness: 1 }));
 ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
-scene.add(new THREE.GridHelper(20, 40, 0x444466, 0x262633));
-
-// groups per mode
-const fightGroup = new THREE.Group(); scene.add(fightGroup);
-const labGroup = new THREE.Group(); scene.add(labGroup);
-const mechRoot = new THREE.Group(); labGroup.add(mechRoot);
+scene.add(new THREE.GridHelper(22, 44, 0x444466, 0x262633));
 
 // ============================================================
-// shared helpers
+// helpers
 // ============================================================
 const V = THREE.Vector3;
 function segHitsSphere(a, b, c, r) {
@@ -108,45 +127,33 @@ function segHitsSphere(a, b, c, r) {
   return new V().copy(a).addScaledVector(ab, t).distanceTo(c) <= r;
 }
 function worldPos(o, out = new V()) { return o.getWorldPosition(out); }
-
 function disposeObj(o) {
-  o.traverse?.((n) => {
-    n.geometry?.dispose?.();
-    if (Array.isArray(n.material)) n.material.forEach((m) => m.dispose?.());
-    else n.material?.dispose?.();
-  });
+  o.traverse?.((n) => { n.geometry?.dispose?.(); if (Array.isArray(n.material)) n.material.forEach((m) => m.dispose?.()); else n.material?.dispose?.(); });
 }
-
 function makeBoard(w, h, worldW, worldH) {
-  const cv = document.createElement('canvas');
-  cv.width = w; cv.height = h;
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
   const ctx = cv.getContext('2d');
   const tex = new THREE.CanvasTexture(cv);
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(worldW, worldH),
-    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(worldW, worldH), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
   function draw(lines, color = '#fff') {
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(0,0,0,.72)';
-    ctx.fillRect(4, 4, w - 8, h - 8);
+    ctx.fillStyle = 'rgba(0,0,0,.72)'; ctx.fillRect(4, 4, w - 8, h - 8);
     ctx.textAlign = 'center';
     const arr = Array.isArray(lines) ? lines : [lines];
     const lh = h / (arr.length + 0.6);
     arr.forEach((ln, i) => {
       ctx.fillStyle = i === 0 ? color : '#cfcfe0';
-      ctx.font = `bold ${i === 0 ? Math.round(lh * 0.62) : Math.round(lh * 0.46)}px system-ui, sans-serif`;
+      ctx.font = `bold ${i === 0 ? Math.round(lh * 0.6) : Math.round(lh * 0.46)}px system-ui, sans-serif`;
       ctx.fillText(ln, w / 2, lh * (i + 0.85), w - 24);
     });
     tex.needsUpdate = true;
   }
-  return { mesh, draw, ctx, canvas: cv, tex };
+  return { mesh, draw, tex, canvas: cv, ctx };
 }
-
-// in-VR heads-up toast (parented to camera, renders inside headsets)
 const hud3d = new THREE.Group();
 hud3d.position.set(0, -0.19, -0.75);
 camera.add(hud3d);
 const toast = makeBoard(640, 128, 0.62, 0.124);
-toast.mesh.position.set(0, 0, 0);
 hud3d.add(toast.mesh);
 
 // ============================================================
@@ -154,9 +161,9 @@ hud3d.add(toast.mesh);
 // ============================================================
 let AC = null;
 function initAudio() { if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } }
-function tone(type, f0, f1, dur, vol) {
+function tone(type, f0, f1, dur, vol, when = 0) {
   if (!AC) return;
-  const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain();
+  const t = AC.currentTime + when, o = AC.createOscillator(), g = AC.createGain();
   o.type = type;
   o.frequency.setValueAtTime(f0, t);
   o.frequency.exponentialRampToValueAtTime(Math.max(30, f1), t + dur);
@@ -165,12 +172,13 @@ function tone(type, f0, f1, dur, vol) {
   o.connect(g).connect(AC.destination);
   o.start(t); o.stop(t + dur + 0.05);
 }
-const whoosh = (s) => tone('sawtooth', 170 + s * 55, 90, 0.18, 0.07);
-const thud = () => tone('sine', 150, 50, 0.16, 0.22);
-const buzz = () => tone('square', 110, 90, 0.28, 0.11);
-const ding = () => tone('triangle', 900, 1400, 0.14, 0.13);
-const zap = () => tone('square', 1400, 300, 0.12, 0.1);
-
+const tickSfx = (down) => { tone('sine', down ? 1100 : 820, down ? 900 : 700, 0.05, down ? 0.05 : 0.025); };
+const hitSfx = () => tone('sine', 160, 55, 0.14, 0.2);
+const missSfx = () => tone('square', 160, 90, 0.1, 0.06);
+const beamSfx = () => tone('sawtooth', 700, 180, 0.22, 0.09);
+const forceSfx = () => tone('triangle', 320, 620, 0.16, 0.1);
+const elemSfx = () => tone('triangle', 700, 1200, 0.1, 0.08);
+const dieSfx = () => tone('sawtooth', 300, 60, 0.5, 0.14);
 function pulseHaptics(intensity, ms) {
   try {
     const gp = [...navigator.getGamepads()].find((g) => g && g.hapticActuators?.length);
@@ -188,21 +196,16 @@ const baseObj = new THREE.Object3D();
 const tipObj = new THREE.Object3D();
 tipObj.position.set(0, 0, -0.95);
 swordAnchor.add(baseObj, tipObj);
-let swordDetached = false;
+const DESKTOP_SWORD = new V(0.25, 1.4, 0.9);
 
 function buildFallbackSword() {
   const g = new THREE.Group();
   const steel = new THREE.MeshStandardMaterial({ color: 0xc9d4e8, metalness: 0.9, roughness: 0.25 });
-  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.05, 0.8), steel);
-  blade.position.z = -0.5;
-  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.04, 0.05),
-    new THREE.MeshStandardMaterial({ color: 0x8a6b2f, metalness: 0.8, roughness: 0.4 }));
-  guard.position.z = -0.08;
-  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.028, 0.22, 12),
-    new THREE.MeshStandardMaterial({ color: 0x3a2415, roughness: 0.9 }));
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.05, 0.8), steel); blade.position.z = -0.5;
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.04, 0.05), new THREE.MeshStandardMaterial({ color: 0x8a6b2f, metalness: 0.8, roughness: 0.4 })); guard.position.z = -0.08;
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.028, 0.22, 12), new THREE.MeshStandardMaterial({ color: 0x3a2415, roughness: 0.9 }));
   grip.rotation.x = Math.PI / 2; grip.position.z = 0.05;
-  g.add(blade, guard, grip);
-  return g;
+  g.add(blade, guard, grip); return g;
 }
 new GLTFLoader().load('./models/sword.glb', (gltf) => {
   const m = gltf.scene;
@@ -211,213 +214,338 @@ new GLTFLoader().load('./models/sword.glb', (gltf) => {
   const s = 0.95 / size.y;
   m.scale.setScalar(s);
   m.position.set(-center.x * s, -min.y * s, -center.z * s);
-  const holder = new THREE.Group();
-  holder.add(m);
-  holder.rotation.x = -Math.PI / 2;
+  const holder = new THREE.Group(); holder.add(m); holder.rotation.x = -Math.PI / 2;
   swordAnchor.add(holder);
   tipObj.position.set(0, 0, -size.y * s);
 }, undefined, () => swordAnchor.add(buildFallbackSword()));
 
-// element aura light (used by the Elemental mechanic)
-const auraLight = new THREE.PointLight(0xff6600, 0, 2.5);
+const auraLight = new THREE.PointLight(0xff6600, 1.1, 2.6);
 swordAnchor.add(auraLight);
 
-// ============================================================
-// grips — sword rides the fist; re-checked every frame
-// ============================================================
+// grips — sword rides the fist
 const grips = [renderer.xr.getControllerGrip(0), renderer.xr.getControllerGrip(1)];
 grips.forEach((g) => {
-  g.userData = { connected: false, handedness: '', prev: [] };
+  g.userData = { connected: false, handedness: '' };
   g.addEventListener('connected', (e) => { g.userData.connected = true; g.userData.handedness = e.data.handedness; initAudio(); });
   g.addEventListener('disconnected', () => { g.userData.connected = false; g.userData.handedness = ''; });
   rig.add(g);
 });
-const wieldEl = document.getElementById('wield');
-const DESKTOP_SWORD = { pos: new V(0.25, 1.4, 0.9) };
 function ensureSwordHeld() {
-  if (swordDetached) return;
   const session = renderer.xr.getSession();
   if (!session) {
-    if (swordAnchor.parent !== scene) {
-      scene.add(swordAnchor);
-      swordAnchor.position.copy(DESKTOP_SWORD.pos);
-      swordAnchor.rotation.set(0, 0, 0);
-    }
-    if (wieldEl.textContent !== '🖥️') wieldEl.textContent = '🖥️';
+    if (swordAnchor.parent !== scene) { scene.add(swordAnchor); swordAnchor.position.copy(DESKTOP_SWORD); swordAnchor.rotation.set(0, 0, 0); }
     return;
   }
-  let target = grips.find((g) => g.userData.connected && g.userData.handedness === 'right')
-    || grips.find((g) => g.userData.connected);
+  let target = grips.find((g) => g.userData.connected && g.userData.handedness === 'right') || grips.find((g) => g.userData.connected);
   if (!target) {
     const srcs = [...session.inputSources];
     let idx = srcs.findIndex((s) => s.handedness === 'right');
     if (idx < 0) idx = srcs.findIndex((s) => s.handedness && s.handedness !== 'none');
     if (idx >= 0 && grips[idx]) target = grips[idx];
   }
-  if (target && swordAnchor.parent !== target) {
-    target.add(swordAnchor);
-    swordAnchor.position.set(0, 0.01, -0.02);
-    swordAnchor.rotation.set(0, 0, 0);
-    wieldEl.textContent = target.userData.handedness === 'left' ? '🎮L' : '🎮R';
-  }
+  if (target && swordAnchor.parent !== target) { target.add(swordAnchor); swordAnchor.position.set(0, 0.01, -0.02); swordAnchor.rotation.set(0, 0, 0); }
+}
+function gripButton(hand, index) {
+  const session = renderer.xr.getSession(); if (!session) return false;
+  for (const src of session.inputSources) { if (src.handedness === hand) return !!src.gamepad?.buttons?.[index]?.pressed; }
+  return false;
+}
+function offhandPos(out = new V()) {
+  const g = grips.find((x) => x.userData.connected && x.userData.handedness === 'left');
+  if (g) return g.getWorldPosition(out);
+  camera.getWorldPosition(out); out.y -= 0.3; return out;
+}
+
+// sword tracking
+const swordState = { tip: new V(), base: new V(), vel: new V(), speed: 0 };
+const _tip = new V(), _base = new V(), _blade = new V(), _vel = new V();
+const tipPrev = new V(); let tipInit = false;
+function trackSword() {
+  tipObj.getWorldPosition(_tip); baseObj.getWorldPosition(_base);
+  swordState.tip.copy(_tip); swordState.base.copy(_base);
+  _blade.subVectors(_tip, _base).normalize();
+  if (!tipInit) { tipPrev.copy(_tip); tipInit = true; return; }
+  _vel.subVectors(_tip, tipPrev).divideScalar(1 / 60);
+  swordState.vel.copy(_vel); swordState.speed = _vel.length();
+  tipPrev.copy(_tip);
 }
 
 // ============================================================
-// sword tracking -> shared swordState (used by fight + lab)
+// beat engine
 // ============================================================
-const swordState = {
-  tip: new V(), base: new V(), vel: new V(), speed: 0,
-  edgeDir: new V(1, 0, 0), align: 0,
-};
-const _tip = new V(), _base = new V(), _blade = new V(), _vel = new V(), _along = new V(), _ex = new V();
-let tipInit = false;
-const tipPrev = new V();
+let beatClock = 0, beatCount = 0, beatPulse = 0, started = false;
+function beatOffset() { return Math.min(beatClock, BEAT - beatClock); }
+function isOnBeat() { return beatOffset() <= ONBEAT; }
+const beatdot = document.getElementById('beatdot');
+const beatRing = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.035, 10, 40), new THREE.MeshBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0.5 }));
+beatRing.position.set(0, 1.5, -1.9);
+scene.add(beatRing);
+
+function onBeat() {
+  beatCount++;
+  const down = beatCount % 4 === 0;
+  tickSfx(down);
+  beatPulse = 1;
+  if (beatCount >= WARMUP_BEATS && beatCount % 4 === 0 && enemies.length < 3) spawnEnemy();
+  for (const e of enemies.slice()) enemyOnBeat(e, down);
+  // burn ticks
+  for (const e of enemies.slice()) if (e.burning) damageEnemy(e, 3, { silent: true, noCombo: true });
+}
 
 // ============================================================
-// HUD
+// cadence / combo / element
 // ============================================================
+let cadence = 40, combo = 0, elemIndex = 0; // start with some ⚡ so the verbs are usable immediately
+let kills = 0, hp = 100;
+const cadfill = document.getElementById('cadfill');
+const hpfill = document.getElementById('hpfill');
+const killsEl = document.getElementById('kills');
+const elemEl = document.getElementById('elem');
+const comboEl = document.getElementById('combo');
 const fbEl = document.getElementById('feedback');
-const mechEl = document.getElementById('mech');
 const vignette = document.getElementById('vignette');
 let fbTimer = 0;
 function feedback(text, color = '#fff') {
   fbEl.textContent = text; fbEl.style.color = color; fbEl.style.opacity = 1;
   toast.draw(text, color);
-  clearTimeout(fbTimer);
-  fbTimer = setTimeout(() => { fbEl.style.opacity = 0; }, 1400);
+  clearTimeout(fbTimer); fbTimer = setTimeout(() => (fbEl.style.opacity = 0), 1300);
 }
-
-// ============================================================
-// FIGHT mode (enemy + hp + swing scoring)
-// ============================================================
-const ENEMY_Z = -1.05;
-const BODY_C = new V(0, 1.32, ENEMY_Z), BODY_R = 0.55;
-const CORE_C = new V(0, 1.32, ENEMY_Z + 0.52), CORE_R = 0.26;
-
-const enemy = new THREE.Group();
-enemy.position.set(0, 0, ENEMY_Z);
-const bodyMat = new THREE.MeshStandardMaterial({ color: 0x5b6b8c, roughness: 0.6, metalness: 0.3 });
-const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.55, 6, 16), bodyMat);
-body.position.y = 1.32;
-const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 24, 18), bodyMat.clone());
-head.position.y = 2.0;
-const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff3344 });
-for (const s of [-1, 1]) {
-  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), eyeMat);
-  eye.position.set(0.1 * s, 2.03, 0.22);
-  enemy.add(eye);
-}
-const core = new THREE.Mesh(new THREE.SphereGeometry(CORE_R, 20, 14),
-  new THREE.MeshStandardMaterial({ color: 0xffb020, emissive: 0xcc6600, emissiveIntensity: 1.2 }));
-core.position.set(0, 1.32, 0.52);
-enemy.add(body, head, core);
-fightGroup.add(enemy);
-
-const fightLabel = makeBoard(512, 150, 1.25, 0.37);
-fightLabel.mesh.position.set(0, 2.62, ENEMY_Z);
-fightGroup.add(fightLabel.mesh);
-
-let hp = 100, kills = 0, streak = 0, flailStreak = 0;
-let punishUntil = 0, enrageUntil = 0, deadUntil = 0;
-let wasOutsideSinceHit = true;
-const hpnum = document.getElementById('hpnum');
-const hpfill = document.getElementById('hpfill');
-const killsEl = document.getElementById('kills');
-const streakEl = document.getElementById('streak');
-
-function refreshHud(msg = '', color = '#fff') {
-  hpnum.textContent = Math.max(0, Math.round(hp));
+function comboMult() { return 1 + Math.min(combo, 12) * 0.12; }
+function spend(n) { if (cadence < n) { shake(); return false; } cadence -= n; return true; }
+function shake() { vignette.style.opacity = 0.5; setTimeout(() => (vignette.style.opacity = 0), 120); }
+function refreshHud() {
+  cadfill.style.width = Math.min(100, cadence) + '%';
   hpfill.style.width = Math.max(0, hp) + '%';
   hpfill.style.background = hp > 50 ? '#4ade80' : hp > 25 ? '#facc15' : '#f87171';
   killsEl.textContent = kills;
-  streakEl.textContent = streak;
-  fightLabel.draw([`HP ${Math.max(0, Math.round(hp))}`, msg], color);
+  elemEl.textContent = ELEMENTS[elemIndex].name;
+  comboEl.textContent = combo > 1 ? `x${combo}` : '';
+  comboEl.style.opacity = combo > 1 ? Math.min(0.35 + combo * 0.08, 1) : 0.25;
 }
-function damage(amount, where, clean, peak) {
-  hp -= amount; streak++; flailStreak = 0;
-  thud(); pulseHaptics(0.9, 120);
-  enemy.position.z = ENEMY_Z + 0.12;
-  setTimeout(() => (enemy.position.z = ENEMY_Z), 120);
-  bodyMat.emissive = new THREE.Color(0xff2222); bodyMat.emissiveIntensity = 0.9;
-  setTimeout(() => (bodyMat.emissiveIntensity = 0), 120);
-  feedback(`${clean ? 'CLEAN HIT' : 'hit'} −${Math.round(amount)}${where === 'core' ? ' CORE!' : ''}`, clean ? '#4ade80' : '#facc15');
-  if (hp <= 0) { kills++; feedback(`KILL! (${kills})`, '#4ade80'); enemy.rotation.x = -1.2; deadUntil = performance.now() + 2000; hp = 0; }
-  refreshHud(clean ? `-${Math.round(amount)} @ ${peak.toFixed(1)} m/s` : 'weak — swing bigger', clean ? '#4ade80' : '#facc15');
-}
-function punish(reason) {
-  flailStreak++; streak = 0; buzz(); pulseHaptics(0.3, 200);
-  punishUntil = performance.now() + 600;
-  if (flailStreak >= 3) {
-    enrageUntil = performance.now() + 2000; flailStreak = 0;
-    eyeMat.color.set(0xff00ff);
-    setTimeout(() => eyeMat.color.set(0xff3344), 2000);
-    feedback('ENRAGED — stop flailing!', '#f87171'); refreshHud('ENRAGED — immune 2s', '#f87171');
-  } else { feedback(reason, '#f87171'); refreshHud(reason, '#f87171'); }
-}
+function resetCombo(why) { if (combo > 2) feedback(`${why} — combo lost`, '#f87171'); combo = 0; }
 
-let swinging = false, swingT0 = 0, lowT0 = 0, path = [], peakPerp = 0, reversals = 0, insideDwell = 0;
-const velPrev = new V();
-function evaluateSwing(now) {
-  const dur = (now - swingT0) / 1000;
-  let arc = 0;
-  for (let i = 1; i < path.length; i++) arc += path[i].p.distanceTo(path[i - 1].p);
-  let hitWhere = null;
-  for (let i = 1; i < path.length; i++) {
-    if (segHitsSphere(path[i - 1].p, path[i].p, CORE_C, CORE_R + 0.1)) { hitWhere = 'core'; break; }
-    if (segHitsSphere(path[i - 1].p, path[i].p, BODY_C, BODY_R)) hitWhere = 'body';
+// ============================================================
+// enemies (rhythmic)
+// ============================================================
+const enemies = [];
+function makeEnemyMesh() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x5b6b8c, roughness: 0.6, metalness: 0.3 });
+  const b = new THREE.Mesh(new THREE.CapsuleGeometry(0.4, 0.55, 6, 16), mat); b.position.y = 1.25;
+  const h = new THREE.Mesh(new THREE.SphereGeometry(0.25, 20, 16), mat.clone()); h.position.y = 1.95;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.62, 32), new THREE.MeshBasicMaterial({ color: 0xff4444, transparent: true, opacity: 0, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.03;
+  g.add(b, h, ring);
+  g.userData = { mat, head: h, ring, hp: ENEMY_HP, state: 'idle', actAt: beatCount + 3, teleUntil: 0, strikeUntil: 0, burning: false, burnUntil: 0, frozenUntil: 0, alive: true };
+  return g;
+}
+function spawnEnemy() {
+  const g = makeEnemyMesh();
+  const x = (Math.random() - 0.5) * 3.2;
+  g.position.set(x, 0, -3.4);
+  scene.add(g);
+  g.userData.actAt = beatCount + 3 + Math.floor(Math.random() * 2);
+  enemies.push(g);
+}
+function enemyOnBeat(e, down) {
+  const u = e.userData;
+  if (u.frozenUntil > beatCount) return;
+  if (u.state === 'idle') {
+    if (beatCount >= u.actAt) { u.state = 'telegraph'; u.teleUntil = beatCount + 1; }
+  } else if (u.state === 'telegraph') {
+    if (beatCount >= u.teleUntil) { u.state = 'strike'; u.strikeUntil = beatCount + 1; doStrike(e); }
+  } else if (u.state === 'strike') {
+    if (beatCount >= u.strikeUntil) { u.state = 'idle'; u.actAt = beatCount + 2 + Math.floor(Math.random() * 2); }
   }
-  if (!hitWhere) return;
-  if (!wasOutsideSinceHit) return punish('STUCK INSIDE — pull out!');
-  if (now < punishUntil || now < enrageUntil || now < deadUntil) return;
-  wasOutsideSinceHit = false;
-  const flail = reversals >= 4 || (reversals >= 3 && arc < 0.9) || (insideDwell > 0.5 && reversals >= 2);
-  if (flail) return punish('FLAIL! 0 dmg — one clean arc');
-  const clean = arc >= 0.5 && dur >= 0.12 && dur <= 1.2 && reversals <= 2 && peakPerp >= 2.0;
-  whoosh(peakPerp);
-  if (clean) {
-    const dmg = Math.min(24, 6 + peakPerp * 2.2) * (hitWhere === 'core' ? 1.5 : 1);
-    damage(dmg, hitWhere, true, peakPerp);
-  } else damage(2 + Math.random() * 2, hitWhere, false, peakPerp);
 }
-function trackSword(now) {
-  tipObj.getWorldPosition(_tip);
-  baseObj.getWorldPosition(_base);
-  swordState.tip.copy(_tip); swordState.base.copy(_base);
-  _blade.subVectors(_tip, _base).normalize();
-  swordState.edgeDir.copy(_ex.set(1, 0, 0).transformDirection(swordAnchor.matrixWorld));
-  if (!tipInit) { tipPrev.copy(_tip); tipInit = true; return; }
-  const step = 1 / 60;
-  _vel.subVectors(_tip, tipPrev).divideScalar(step);
-  swordState.vel.copy(_vel);
-  swordState.speed = _vel.length();
-  swordState.align = swordState.speed > 0.01 ? Math.abs(_vel.dot(swordState.edgeDir)) / swordState.speed : 0;
+function doStrike(e) {
+  const cam = worldPos(camera);
+  const d = Math.hypot(cam.x - e.position.x, cam.z - e.position.z);
+  if (d < REACH) {
+    hp -= ENEMY_DMG; resetCombo('hit'); missSfx(); pulseHaptics(1, 200); shake();
+    feedback(`struck −${ENEMY_DMG} HP`, '#f87171');
+    if (hp <= 0) { hp = 0; dieSfx(); feedback('DOWN — recovering…', '#f87171'); setTimeout(respawn, 2500); }
+  } else {
+    feedback('attack whiffed — keep moving', '#9a9ab0');
+  }
+}
+function respawn() { hp = 100; combo = 0; cadence = 0; }
+function damageEnemy(e, dmg, opts = {}) {
+  if (!e.userData.alive) return;
+  e.userData.hp -= dmg;
+  if (!opts.silent) { hitSfx(); pulseHaptics(0.8, 90); }
+  e.userData.mat.emissive = new THREE.Color(0xff3333); e.userData.mat.emissiveIntensity = 0.8;
+  setTimeout(() => (e.userData.mat.emissiveIntensity = 0), 120);
+  if (e.userData.hp <= 0) {
+    e.userData.alive = false;
+    kills++;
+    dieSfx();
+    scene.remove(e); disposeObj(e);
+    const i = enemies.indexOf(e); if (i >= 0) enemies.splice(i, 1);
+    feedback(`KILL (${kills})`, '#4ade80');
+  }
+}
+function nearestEnemy(from, max = 99) {
+  let best = null, bd = max;
+  for (const e of enemies) { const d = e.position.distanceTo(from); if (d < bd) { bd = d; best = e; } }
+  return best;
+}
 
-  if (mode !== 'fight') { tipPrev.copy(_tip); return; }
-  if (deadUntil && now > deadUntil) { deadUntil = 0; hp = 100; enemy.rotation.x = 0; refreshHud('fresh opponent'); }
-  const inside = _tip.distanceTo(BODY_C) < BODY_R + 0.05;
-  if (!inside) wasOutsideSinceHit = true;
-  // perpendicular speed (edge-leading component)
-  _along.copy(_vel).addScaledVector(_blade, -_vel.dot(_blade));
-  const perpSpeed = _along.length();
-  if (!swinging && perpSpeed > 1.2 && swordState.speed < 14) {
-    swinging = true; swingT0 = now; lowT0 = 0;
-    path = [{ p: _tip.clone() }]; peakPerp = perpSpeed; reversals = 0; insideDwell = 0;
-    velPrev.copy(_vel);
-  } else if (swinging) {
-    path.push({ p: _tip.clone() });
-    peakPerp = Math.max(peakPerp, perpSpeed);
-    if (inside) insideDwell += step;
-    if (_vel.lengthSq() > 0.04 && velPrev.lengthSq() > 0.04) {
-      if (_vel.angleTo(velPrev) > 1.75) reversals++;
-      velPrev.copy(_vel);
+// ============================================================
+// element application
+// ============================================================
+function applyElement(e, dmg) {
+  const el = ELEMENTS[elemIndex];
+  auraLight.color.setHex(el.color);
+  if (el.id === 'fire') { e.userData.burning = true; e.userData.burnUntil = performance.now() + 3000; }
+  else if (el.id === 'ice') { e.userData.frozenUntil = beatCount + 2; }
+  else if (el.id === 'chain') {
+    const other = enemies.find((o) => o !== e && o.position.distanceTo(e.position) < 3.2);
+    if (other) {
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([worldPos(e), worldPos(other)]), new THREE.LineBasicMaterial({ color: 0xffff66 }));
+      scene.add(line); setTimeout(() => { scene.remove(line); disposeObj(line); }, 130);
+      damageEnemy(other, dmg * 0.5, { silent: true });
     }
-    if (perpSpeed < 0.7) {
-      if (!lowT0) lowT0 = now;
-      if (now - lowT0 > 80) { swinging = false; evaluateSwing(now); }
-    } else lowT0 = 0;
-    if (now - swingT0 > 1500) { swinging = false; evaluateSwing(now); }
   }
-  tipPrev.copy(_tip);
+}
+function cycleElement() {
+  if (!spend(COST.elem)) { feedback('need ⚡ to change element', '#f87171'); return; }
+  elemIndex = (elemIndex + 1) % ELEMENTS.length;
+  elemSfx();
+  auraLight.color.setHex(ELEMENTS[elemIndex].color);
+  feedback(`element: ${ELEMENTS[elemIndex].name}`, ELEMENTS[elemIndex].hex);
+}
+
+// ============================================================
+// verbs
+// ============================================================
+let meleeCd = 0, beamCd = 0, beamArmed = true;
+
+function meleeHit(e, onBeat) {
+  const mult = comboMult();
+  let dmg = MELEE_DMG * mult;
+  if (!onBeat) dmg *= 0.3;
+  damageEnemy(e, dmg);
+  applyElement(e, dmg);
+  // knockback
+  const dir = new V().subVectors(e.position, worldPos(camera)).setY(0).normalize();
+  e.position.addScaledVector(dir, onBeat ? 0.35 : 0.12);
+  if (onBeat) {
+    cadence = Math.min(CAD_MAX, cadence + GAIN.melee);
+    combo++;
+    // interrupt telegraphs on beat
+    if (e.userData.state === 'telegraph') {
+      e.userData.state = 'idle'; e.userData.actAt = beatCount + 2;
+      feedback(`INTERRUPTED · +${Math.round(dmg)}`, '#4ade80');
+    } else {
+      feedback(`ON BEAT +${Math.round(dmg)} · x${combo}`, '#4ade80');
+    }
+  } else {
+    resetCombo('off-beat');
+    feedback(`off-beat +${Math.round(dmg)}`, '#facc15');
+  }
+}
+
+function tryMelee(now) {
+  if (now < meleeCd || swordState.speed < 2.2) return;
+  for (const e of enemies) {
+    const center = worldPos(e).setY(1.25);
+    const headC = worldPos(e.userData.head);
+    if (segHitsSphere(swordState.base, swordState.tip, center, 0.5) || segHitsSphere(swordState.base, swordState.tip, headC, 0.34)) {
+      meleeCd = now + 300;
+      meleeHit(e, isOnBeat());
+      return;
+    }
+  }
+}
+
+function tryBeam(now) {
+  if (now < beamCd) return;
+  if (swordState.speed < 5.8) { beamArmed = true; return; }
+  if (!beamArmed) return;
+  if (!isOnBeat()) { beamArmed = false; return; } // heavy off-beat swing = just a cut
+  if (cadence < COST.beam) { beamArmed = false; feedback('need ⚡25 for a beam', '#f87171'); return; }
+  beamArmed = false; beamCd = now + 700;
+  cadence -= COST.beam;
+  beamSfx(); pulseHaptics(0.9, 110);
+  cadence = Math.min(CAD_MAX, cadence + GAIN.beam);
+  const w = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.05, 6, 22, Math.PI), new THREE.MeshBasicMaterial({ color: ELEMENTS[elemIndex].color }));
+  w.position.copy(swordState.tip);
+  const dir = worldPos(camera).setY(1.2).sub(swordState.tip).setY(0).normalize().negate();
+  w.lookAt(worldPos(camera));
+  w.userData = { v: dir.clone().multiplyScalar(-9), dmg: BEAM_DMG * comboMult() };
+  scene.add(w); beams.push(w);
+  feedback(`BEAM ⚡ ${ELEMENTS[elemIndex].name}`, ELEMENTS[elemIndex].hex);
+}
+const beams = [];
+function updateBeams(dt) {
+  for (let i = beams.length - 1; i >= 0; i--) {
+    const w = beams[i];
+    w.position.addScaledVector(w.userData.v, dt);
+    w.scale.addScalar(dt * 1.6);
+    let done = w.position.length() > 16;
+    if (!done) {
+      for (const e of enemies) {
+        if (segHitsSphere(w.position, w.position, worldPos(e).setY(1.25), 0.55)) {
+          damageEnemy(e, w.userData.dmg); applyElement(e, w.userData.dmg);
+          if (isOnBeat()) { combo++; cadence = Math.min(CAD_MAX, cadence + 6); }
+          done = true; break;
+        }
+      }
+    }
+    if (done) { scene.remove(w); disposeObj(w); beams.splice(i, 1); }
+  }
+}
+
+// force: off-hand trigger = pull, grip = push
+let prevPull = false, prevPush = false;
+function doPull() {
+  const onBeat = isOnBeat();
+  if (!spend(COST.force)) { feedback('need ⚡ to pull', '#f87171'); return; }
+  forceSfx(); pulseHaptics(0.6, 90);
+  const off = offhandPos();
+  spawnForceRing(off, 0x38bdf8, false);
+  const e = nearestEnemy(off, 6);
+  if (e) {
+    const dir = new V().subVectors(worldPos(camera), e.position).setY(0).normalize();
+    e.position.addScaledVector(dir, onBeat ? 1.5 : 0.8);
+    if (onBeat) { e.userData.state = 'idle'; e.userData.actAt = beatCount + 2; cadence = Math.min(CAD_MAX, cadence + GAIN.force); feedback('PULL on beat — staggered', '#38bdf8'); }
+    else feedback('pulled', '#38bdf8');
+  } else feedback('nothing to pull', '#9a9ab0');
+}
+function doPush() {
+  const onBeat = isOnBeat();
+  if (!spend(COST.force)) { feedback('need ⚡ to push', '#f87171'); return; }
+  forceSfx(); pulseHaptics(0.6, 90);
+  const off = offhandPos();
+  spawnForceRing(off, 0xf97316, true);
+  const e = nearestEnemy(off, 3.2);
+  if (e) {
+    const dir = new V().subVectors(e.position, off).setY(0).normalize();
+    e.position.addScaledVector(dir, onBeat ? 1.8 : 0.9);
+    if (onBeat) {
+      e.userData.state = 'idle'; e.userData.actAt = beatCount + 2;
+      e.userData.frozenUntil = Math.max(e.userData.frozenUntil, beatCount + 1); // brief stagger
+      cadence = Math.min(CAD_MAX, cadence + GAIN.force);
+      feedback('PUSH on beat — interrupted', '#4ade80');
+    } else feedback('pushed', '#f97316');
+  } else feedback('nothing in range', '#9a9ab0');
+}
+const forceRings = [];
+function spawnForceRing(pos, color, outward) {
+  const r = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.03, 8, 28), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 }));
+  r.position.copy(pos); r.lookAt(worldPos(camera));
+  r.userData = { t: 0, outward };
+  scene.add(r); forceRings.push(r);
+}
+function updateForceRings(dt) {
+  for (let i = forceRings.length - 1; i >= 0; i--) {
+    const r = forceRings[i]; r.userData.t += dt;
+    const k = r.userData.t / 0.35;
+    const s = r.userData.outward ? 1 + k * 5 : 5 - k * 4.5;
+    r.scale.setScalar(Math.max(0.1, s)); r.material.opacity = Math.max(0, 0.9 - k);
+    if (k >= 1) { scene.remove(r); disposeObj(r); forceRings.splice(i, 1); }
+  }
 }
 
 // ============================================================
@@ -427,19 +555,14 @@ const keys = {};
 addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
 addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
 const _fwd = new V(), _strafe = new V(), _mv = new V();
-const ARENA_R = 4.5, MOVE_SPEED = 2.4;
-function clampArena() {
-  const r = Math.hypot(rig.position.x, rig.position.z);
-  if (r > ARENA_R) { rig.position.x *= ARENA_R / r; rig.position.z *= ARENA_R / r; }
-}
+const ARENA_R = 5, MOVE_SPEED = 2.4;
+function clampArena() { const r = Math.hypot(rig.position.x, rig.position.z); if (r > ARENA_R) { rig.position.x *= ARENA_R / r; rig.position.z *= ARENA_R / r; } }
 function locomotion(dt) {
   const session = renderer.xr.getSession();
   if (session) {
     for (const src of session.inputSources) {
-      const gp = src.gamepad;
-      if (!gp || gp.axes.length < 2) continue;
-      const n = gp.axes.length;
-      const sx = gp.axes[n - 2], sy = gp.axes[n - 1];
+      const gp = src.gamepad; if (!gp || gp.axes.length < 2) continue;
+      const n = gp.axes.length, sx = gp.axes[n - 2], sy = gp.axes[n - 1];
       if (src.handedness === 'left') {
         const mag = Math.hypot(sx, sy);
         if (mag > 0.2) {
@@ -447,10 +570,9 @@ function locomotion(dt) {
           if (_fwd.lengthSq() < 1e-6) _fwd.set(0, 0, -1); else _fwd.normalize();
           _strafe.set(-_fwd.z, 0, _fwd.x);
           _mv.set(0, 0, 0).addScaledVector(_fwd, -sy).addScaledVector(_strafe, sx).normalize();
-          rig.position.addScaledVector(_mv, MOVE_SPEED * dt * Math.min(1, mag));
-          clampArena();
+          rig.position.addScaledVector(_mv, MOVE_SPEED * dt * Math.min(1, mag)); clampArena();
         }
-      } else if (src.handedness === 'right' && mode === 'fight') {
+      } else if (src.handedness === 'right') {
         if (Math.abs(sx) > 0.2) rig.rotation.y -= sx * 1.8 * dt;
       }
     }
@@ -467,50 +589,40 @@ function locomotion(dt) {
 }
 
 // ============================================================
-// quick reload
+// input: reload, element, force
 // ============================================================
 let reloadArmed = 0;
 function checkReload(now) {
   const session = renderer.xr.getSession();
   if (session) {
     let held = 0;
-    for (const src of session.inputSources) {
-      const b = src.gamepad?.buttons;
-      if (b && (b[1]?.pressed || b[0]?.pressed)) held++;
-    }
-    if (held >= 2) {
-      if (!reloadArmed) { reloadArmed = now; feedback('reloading… keep holding', '#facc15'); }
-      else if (now - reloadArmed > 700) location.reload();
-      return;
-    }
+    for (const src of session.inputSources) { const b = src.gamepad?.buttons; if (b && (b[1]?.pressed || b[0]?.pressed)) held++; }
+    if (held >= 2) { if (!reloadArmed) { reloadArmed = now; feedback('reloading… keep holding', '#facc15'); } else if (now - reloadArmed > 700) location.reload(); return; }
   }
   reloadArmed = 0;
 }
 addEventListener('keydown', (e) => { if (e.key === 'r' || e.key === 'R') location.reload(); });
-
-// ============================================================
-// left-controller buttons (mode toggle)
-// ============================================================
-function leftButtonsPressed(indexList) {
+addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  if (k === 'e') cycleElement();
+  if (k === 'q') doPull();
+  if (k === 'f') doPush();
+  if (k === ' ') initAudio();
+});
+let prevElemBtn = false;
+function handleVerbs(now) {
   const session = renderer.xr.getSession();
-  if (!session) return false;
-  for (const src of session.inputSources) {
-    if (src.handedness !== 'left') continue;
-    const b = src.gamepad?.buttons;
-    if (!b) continue;
-    return indexList.some((i) => b[i]?.pressed);
-  }
-  return false;
-}
-// grips get prev-button tracking too (for charge/throw/etc.)
-function gripButton(hand, index) {
-  const session = renderer.xr.getSession();
-  if (!session) return false;
-  for (const src of session.inputSources) {
-    if (src.handedness !== hand) continue;
-    return !!src.gamepad?.buttons?.[index]?.pressed;
-  }
-  return false;
+  if (!session) return;
+  const leftGrip = gripButton('left', 1) || gripButton('left', 2);
+  const rightGrip = gripButton('right', 1) || gripButton('right', 2);
+  const leftTrig = gripButton('left', 0);
+  // element: right grip tap, but not while both grips held (that's reload)
+  if (rightGrip && !prevElemBtn && !leftGrip) cycleElement();
+  prevElemBtn = rightGrip;
+  // force
+  if (leftTrig && !prevPull) doPull();
+  if (leftGrip && !prevPush) doPush();
+  prevPull = leftTrig; prevPush = leftGrip;
 }
 
 // ============================================================
@@ -520,7 +632,7 @@ let dragging = false, px = 0, py = 0;
 addEventListener('pointerdown', (e) => { dragging = true; px = e.clientX; py = e.clientY; initAudio(); });
 addEventListener('pointerup', () => (dragging = false));
 addEventListener('pointermove', (e) => {
-  if (renderer.xr.isPresenting || !dragging || swordDetached) return;
+  if (renderer.xr.isPresenting || !dragging) return;
   const dx = (e.clientX - px) / innerHeight, dy = (e.clientY - py) / innerHeight;
   px = e.clientX; py = e.clientY;
   swordAnchor.position.x = THREE.MathUtils.clamp(swordAnchor.position.x + dx * 2.2, -1.2, 1.2);
@@ -530,613 +642,75 @@ addEventListener('pointermove', (e) => {
 });
 
 // ============================================================
-// LAB: shared builders
+// enemy visuals + movement
 // ============================================================
-const DUMMY_Z = -1.05;
-function makeDummy(x = 0, z = DUMMY_Z, scale = 1, color = 0x5b6b8c) {
-  const g = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.3 });
-  const b = new THREE.Mesh(new THREE.CapsuleGeometry(0.42 * scale, 0.55 * scale, 6, 16), mat);
-  b.position.y = 1.32 * scale;
-  const h = new THREE.Mesh(new THREE.SphereGeometry(0.26 * scale, 20, 16), mat.clone());
-  h.position.y = 2.0 * scale;
-  g.add(b, h);
-  g.position.set(x, 0, z);
-  g.userData = { body: b, head: h, mat, scale };
-  return g;
-}
-function dummyBodyCenter(d) { return worldPos(d.userData.body); }
-function dummyHeadCenter(d) { return worldPos(d.userData.head); }
-
-let _lastHitT = 0;
-function tryBladeHit(d, minSpeed = 2.0, cooldown = 320) {
-  const now = performance.now();
-  if (now - _lastHitT < cooldown) return null;
-  if (swordState.speed < minSpeed) return null;
-  const s = d.userData.scale;
-  if (!segHitsSphere(swordState.base, swordState.tip, dummyBodyCenter(d), 0.52 * s)
-    && !segHitsSphere(swordState.base, swordState.tip, dummyHeadCenter(d), 0.34 * s)) return null;
-  _lastHitT = now;
-  ding();
-  pulseHaptics(0.8, 100);
-  return { speed: swordState.speed, align: swordState.align };
-}
-function flash(d, color = 0xff2222, ms = 130) {
-  const m = d.userData.mat;
-  m.emissive = new THREE.Color(color); m.emissiveIntensity = 0.9;
-  setTimeout(() => (m.emissiveIntensity = 0), ms);
-}
-function spawnOrb(root, pos, color, r = 0.12) {
-  const m = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12),
-    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.9 }));
-  m.position.copy(pos);
-  root.add(m);
-  return m;
-}
-function offhandPos(out = new V()) {
-  const g = grips.find((x) => x.userData.connected && x.userData.handedness === 'left');
-  if (g) return g.getWorldPosition(out);
-  camera.getWorldPosition(out);
-  out.y -= 0.3;
-  return out;
-}
-function cameraWorld(out = new V()) { return camera.getWorldPosition(out); }
-function elapsed(t0, now) { return (now - t0) / 1000; }
-
-// ============================================================
-// LAB: 15 mechanics
-// ============================================================
-const MECHANICS = [];
-
-// 1 — EDGE ALIGNMENT
-MECHANICS.push({
-  name: 'Edge Alignment', color: '#93c5fd',
-  tip: 'Cut with the edge, not the flat.',
-  how: ['Blade flat = 30% dmg', 'Edge-on = 100% dmg', 'Watch the % on the board'],
-  setup(root) { this.d = makeDummy(); root.add(this.d); this.best = 0; },
-  update(dt, now) {
-    const al = swordState.align;
-    const hit = tryBladeHit(this.d, 2.2, 380);
-    if (hit) {
-      const pct = Math.round(hit.align * 100);
-      this.best = Math.max(this.best, pct);
-      const dmg = Math.round(4 + hit.align * 20);
-      flash(this.d, 0x4ade80, 150);
-      hurtDummy(this.d, dmg);
-      feedback(`edge ${pct}% → ${dmg} dmg`, pct > 70 ? '#4ade80' : pct > 40 ? '#facc15' : '#f87171');
+function updateEnemies(dt, now) {
+  const cam = worldPos(camera);
+  for (const e of enemies) {
+    const u = e.userData;
+    // approach toward player to just inside reach
+    const dx = cam.x - e.position.x, dz = cam.z - e.position.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > 1.05) {
+      const sp = (u.frozenUntil > beatCount ? 0 : 0.55);
+      e.position.x += (dx / dist) * sp * dt;
+      e.position.z += (dz / dist) * sp * dt;
     }
-    mechEl.textContent = `live edge alignment: ${Math.round(al * 100)}%  ·  best: ${this.best}%`;
-  },
-});
-
-// 2 — TIMED PARRY
-MECHANICS.push({
-  name: 'Timed Parry', color: '#fca5a5',
-  tip: 'Put the blade where the strike will land.',
-  how: ['Enemy winds up (red glow)', 'Hold blade in front before impact', 'Swing after = riposte bonus'],
-  setup(root) {
-    this.d = makeDummy(); root.add(this.d);
-    this.state = 'idle'; this.t = performance.now() + 1200; this.parries = 0; this.riposte = false;
-    this.bladeMarker = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.02, 8, 24),
-      new THREE.MeshBasicMaterial({ color: 0x60a5fa }));
-    root.add(this.bladeMarker);
-  },
-  update(dt, now) {
-    const d = this.d;
-    if (this.state === 'idle' && now > this.t) { this.state = 'wind'; this.t = now + 800; flash(d, 0xff2222, 800); feedback('incoming — raise blade!', '#f87171'); }
-    else if (this.state === 'wind' && now > this.t) { this.state = 'strike'; this.t = now + 160; this.riposte = false; }
-    else if (this.state === 'strike' && now > this.t) {
-      const blockPt = cameraWorld().addScaledVector(new V(0, 0, -1).applyQuaternion(camera.quaternion).setY(0).normalize(), 0.55);
-      const near = swordState.tip.distanceTo(blockPt) < 0.5 || swordState.base.distanceTo(blockPt) < 0.6;
-      if (near) {
-        this.parries++; ding(); pulseHaptics(1, 150); flash(d, 0x60a5fa, 200);
-        feedback('PARRY! swing now for riposte', '#4ade80');
-        this.riposte = true; this.t = now + 1200;
-      } else {
-        buzz(); pulseHaptics(0.4, 200); flash(d, 0xff2222, 300);
-        feedback('hit — you took 8', '#f87171');
-        this.t = now + 1400;
-      }
-      this.state = 'idle';
-    }
-    if (this.riposte) {
-      const hit = tryBladeHit(d, 2.5, 300);
-      if (hit) { this.riposte = false; flash(d, 0xffd166, 250); feedback('RIPOSTE! +25', '#facc15'); hurtDummy(d, 25); this.t = now + 1200; }
-    }
-    this.bladeMarker.position.copy(swordState.tip);
-    this.bladeMarker.visible = this.state === 'wind';
-    mechEl.textContent = `parries: ${this.parries}`;
-  },
-});
-
-// 3 — CHARGE DRAW
-MECHANICS.push({
-  name: 'Charge Draw', color: '#fcd34d',
-  tip: 'Hold trigger, pull back, release heavy.',
-  how: ['Hold TRIGGER to charge', 'Distance + time = power', 'Release near enemy to strike'],
-  setup(root) { this.d = makeDummy(); root.add(this.d); this.charging = false; this.c = 0; this.window = 0; this.prev = false; this.bar = makeBoard(512, 120, 1.1, 0.26); this.bar.mesh.position.set(0, 2.7, DUMMY_Z); root.add(this.bar.mesh); },
-  update(dt, now) {
-    const btn = gripButton('right', 0);
-    if (btn && !this.prev) { this.charging = true; this.c = 0; }
-    if (btn && this.charging) this.c = Math.min(1, this.c + dt * 0.8);
-    if (!btn && this.prev && this.charging) { this.charging = false; this.window = now + 450; whoosh(4 + this.c * 6); }
-    this.prev = btn;
-    if (this.window && now > this.window) { this.window = 0; this.c = 0; }
-    if (this.window) {
-      const hit = tryBladeHit(this.d, 1.5, 200);
-      if (hit) { const dmg = Math.round(6 + this.c * 34); flash(this.d, 0xfcd34d, 220); hurtDummy(this.d, dmg); feedback(`CHARGED ${Math.round(this.c * 100)}% → ${dmg}`, '#facc15'); this.window = 0; this.c = 0; }
-    }
-    this.bar.draw([`charge ${Math.round(this.c * 100)}%`, this.charging ? 'building…' : this.window ? 'STRIKE NOW' : 'hold trigger'], this.c > 0.66 ? '#4ade80' : '#fcd34d');
-  },
-});
-
-// 4 — WEAK POINT
-MECHANICS.push({
-  name: 'Weak Point', color: '#f0abfc',
-  tip: 'Only the glowing node takes damage.',
-  how: ['Hit the pink node = 20 dmg', 'Body hits = 1 dmg', 'It drifts while you aim'],
-  setup(root) {
-    this.d = makeDummy(); root.add(this.d);
-    this.wp = new THREE.Mesh(new THREE.SphereGeometry(0.11, 16, 12), new THREE.MeshStandardMaterial({ color: 0xf472b6, emissive: 0xd946ef, emissiveIntensity: 1.3 }));
-    root.add(this.wp); this.phase = 0;
-  },
-  update(dt, now) {
-    this.phase += dt; const s = this.d.userData.scale;
-    const bx = this.d.position.x, bz = this.d.position.z;
-    this.wp.position.set(bx + Math.sin(this.phase * 1.6) * 0.5, 1.32 * s + Math.sin(this.phase * 2.3) * 0.45, bz + 0.42);
-    const hit = tryBladeHit(this.d, 2, 300);
-    if (hit) {
-      const onNode = swordState.tip.distanceTo(this.wp.position) < 0.22 || swordState.base.distanceTo(this.wp.position) < 0.3;
-      if (onNode) { flash(this.d, 0xf472b6, 200); hurtDummy(this.d, 20); feedback('WEAK POINT! +20', '#4ade80'); }
-      else { hurtDummy(this.d, 1); feedback('body shrug — 1 dmg', '#999'); }
-    }
-    mechEl.textContent = 'hit the drifting pink node';
-  },
-});
-
-// 5 — TWO-HANDED GRIP
-MECHANICS.push({
-  name: 'Two-Handed Grip', color: '#a7f3d0',
-  tip: 'Second hand on the hilt = power.',
-  how: ['Bring off-hand to the hilt', '2H = 2x damage', 'One hand = normal'],
-  setup(root) { this.d = makeDummy(); root.add(this.d); this.hint = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), new THREE.MeshBasicMaterial({ color: 0x4ade80 })); swordAnchor.add(this.hint); this.hint.position.set(0, 0, -0.08); },
-  teardown() { swordAnchor.remove(this.hint); },
-  update(dt, now) {
-    const off = offhandPos(); const grip = worldPos(swordAnchor);
-    const two = off.distanceTo(grip) < 0.28;
-    this.hint.visible = true; this.hint.material.color.set(two ? 0x4ade80 : 0xf59e0b);
-    const hit = tryBladeHit(this.d, 2, 320);
-    if (hit) { const dmg = Math.round(7 * (two ? 2 : 1)); flash(this.d, two ? 0x4ade80 : 0xf59e0b, 200); hurtDummy(this.d, dmg); feedback(two ? `TWO-HANDED +${dmg}` : `one-hand +${dmg}`, two ? '#4ade80' : '#f59e0b'); }
-    mechEl.textContent = two ? 'TWO-HANDED — 2x' : 'bring off-hand to the hilt';
-  },
-});
-
-// 6 — RHYTHM COMBO
-MECHANICS.push({
-  name: 'Rhythm Combo', color: '#67e8f9',
-  tip: 'Hit on the beat to build a combo.',
-  how: ['A pulse beats every 0.6s', 'Hit within ±0.13s = on beat', 'Off beat resets combo'],
-  setup(root) { this.d = makeDummy(); root.add(this.d); this.combo = 0; this.lastBeat = performance.now(); this.beat = 600; },
-  update(dt, now) {
-    if (now - this.lastBeat > this.beat) { this.lastBeat += this.beat; tone('sine', 600, 600, 0.05, 0.05); }
-    const phase = (now - this.lastBeat) / this.beat;
-    const onBeat = Math.min(phase, Math.abs(1 - phase)) < 0.22 || Math.min(1 - phase, phase) < 0.22;
-    this.d.userData.mat.emissiveIntensity = onBeat ? 0.5 : 0.0;
-    this.d.userData.mat.emissive = new THREE.Color(0x22d3ee);
-    const hit = tryBladeHit(this.d, 2, 250);
-    if (hit) {
-      const offset = Math.min(phase, 1 - phase) * this.beat;
-      if (offset < 130) { this.combo = Math.min(9, this.combo + 1); ding(); feedback(`ON BEAT x${this.combo}`, '#4ade80'); hurtDummy(this.d, 4 * this.combo); }
-      else { this.combo = 0; buzz(); feedback('off beat — reset', '#f87171'); hurtDummy(this.d, 2); }
-    }
-    mechEl.textContent = `combo x${this.combo}  ·  ${onBeat ? 'ON BEAT NOW' : 'wait for the pulse'}`;
-  },
-});
-
-// 7 — DODGE THE TELEGRAPH
-MECHANICS.push({
-  name: 'Dodge the Slam', color: '#fdba74',
-  tip: 'Step out of the red zone — feet, not sword.',
-  how: ['Red ring = impact zone', 'Physically move out of it', 'Sword can’t block this one'],
-  setup(root) {
-    this.d = makeDummy(0, -1.6); root.add(this.d);
-    this.zone = new THREE.Mesh(new THREE.RingGeometry(0.2, 1.1, 40), new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.35, side: THREE.DoubleSide }));
-    this.zone.rotation.x = -Math.PI / 2; this.zone.position.set(0, 0.03, 0.1); root.add(this.zone);
-    this.state = 'idle'; this.t = performance.now() + 1500; this.dodges = 0; this.hits = 0;
-  },
-  update(dt, now) {
-    const d = this.d;
-    if (this.state === 'idle' && now > this.t) { this.state = 'wind'; this.t = now + 1300; feedback('SLAM INCOMING — move!', '#f87171'); }
-    else if (this.state === 'wind') {
-      this.zone.material.opacity = 0.25 + 0.5 * Math.abs(Math.sin(now * 0.008));
-      d.position.y = -0.2 + 0.7 * Math.sin((1 - (this.t - now) / 1300) * Math.PI * 0.5);
-    } else if (this.state === 'wind' && now > this.t) {
-      const cam = cameraWorld();
-      const dist = Math.hypot(cam.x - this.zone.position.x, cam.z - this.zone.position.z);
-      d.position.y = 0;
-      if (dist < 1.1) { this.hits++; buzz(); pulseHaptics(1, 250); feedback('SLAMMED — step aside next time', '#f87171'); }
-      else { this.dodges++; ding(); feedback('DODGED!', '#4ade80'); }
-      this.state = 'idle'; this.t = now + 1600; this.zone.material.opacity = 0.35;
-    }
-    mechEl.textContent = `dodged ${this.dodges} · hit ${this.hits}`;
-  },
-});
-
-// 8 — THROW & RECALL
-MECHANICS.push({
-  name: 'Throw & Recall', color: '#c4b5fd',
-  tip: 'Hurl the sword, then call it back.',
-  how: ['Release GRIP to throw', 'Blade flies & sticks', 'Press TRIGGER to recall'],
-  setup(root) {
-    this.d = makeDummy(0, -3.2); root.add(this.d);
-    this.vel = new V(); this.spin = new V(); this.flying = false; this.stuck = false; this.prevGrip = false; this.prevTrig = false;
-  },
-  teardown() { swordDetached = false; },
-  update(dt, now) {
-    const gripB = gripButton('right', 1) || gripButton('right', 2);
-    const trig = gripButton('right', 0);
-    if (gripB && !this.prevGrip && !this.flying && !this.stuck) {
-      swordDetached = true; this.flying = true;
-      swordAnchor.getWorldQuaternion(new THREE.Quaternion());
-      this.vel.copy(swordState.vel).clampLength(0, 12);
-      this.spin.set((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10);
-      feedback('thrown!', '#c4b5fd');
-    }
-    if (this.flying) {
-      this.vel.y -= 9.8 * dt;
-      swordAnchor.position.addScaledVector(this.vel, dt);
-      swordAnchor.rotation.x += this.spin.x * dt; swordAnchor.rotation.y += this.spin.y * dt;
-      if (swordAnchor.position.y < 0.1) { swordAnchor.position.y = 0.1; this.vel.multiplyScalar(0); this.flying = false; this.stuck = true; this.spin.set(0, 0, 0); }
-      const dPos = dummyBodyCenter(this.d);
-      if (this.flying && swordState.tip.distanceTo(dPos) < 0.4) {
-        this.flying = false; this.stuck = true; this.spin.set(0, 0, 0);
-        flash(this.d, 0xc4b5fd, 250); hurtDummy(this.d, 22); feedback('stuck in target! +22', '#4ade80');
-      }
-    }
-    if ((this.stuck || this.flying) && trig && !this.prevTrig) {
-      this.stuck = false; this.flying = false; swordDetached = false;
-      feedback('recalled', '#c4b5fd'); ding();
-    }
-    if (!this.flying && !this.stuck) { /* ensureSwordHeld reattaches to the fist */ }
-    this.prevGrip = gripB; this.prevTrig = trig;
-    mechEl.textContent = this.flying ? 'in flight…' : this.stuck ? 'press TRIGGER to recall' : 'release GRIP to throw';
-  },
-});
-
-// 9 — DEFLECT PROJECTILES
-MECHANICS.push({
-  name: 'Deflect Projectiles', color: '#f9a8d4',
-  tip: 'Slash orbs back into the enemy.',
-  how: ['Orbs fly at you', 'Slash an orb to reflect it', 'Deflected orbs damage the enemy'],
-  setup(root) { this.d = makeDummy(0, -1.9); root.add(this.d); this.orbs = []; this.t = performance.now(); this.score = 0; },
-  update(dt, now) {
-    if (now > this.t) {
-      this.t = now + 1100;
-      const o = spawnOrb(mechRoot, new V(this.d.position.x + (Math.random() - 0.5) * 0.6, 1.2 + Math.random() * 0.5, this.d.position.z + 0.3), 0xff7755);
-      o.userData = { v: new V((Math.random() - 0.5) * 0.8, 0, 1).normalize().multiplyScalar(2.6), deflected: false };
-      this.orbs.push(o);
-    }
-    for (let i = this.orbs.length - 1; i >= 0; i--) {
-      const o = this.orbs[i];
-      o.position.addScaledVector(o.userData.v, dt);
-      const nearBlade = segHitsSphere(swordState.base, swordState.tip, o.position, 0.16) && swordState.speed > 1.6;
-      if (nearBlade && !o.userData.deflected) {
-        o.userData.deflected = true;
-        const aim = new V().subVectors(dummyBodyCenter(this.d), o.position).normalize();
-        o.userData.v.copy(aim).multiplyScalar(7);
-        o.material.color.set(0x66ff99); o.material.emissive.set(0x33ff77);
-        this.score++; zap(); pulseHaptics(0.7, 90);
-        feedback('DEFLECTED!', '#4ade80');
-      }
-      if (o.userData.deflected && o.position.distanceTo(dummyBodyCenter(this.d)) < 0.5) {
-        flash(this.d, 0x4ade80, 250); hurtDummy(this.d, 12); feedback('enemy hit +12', '#f9a8d4'); mechRoot.remove(o); disposeObj(o); this.orbs.splice(i, 1); continue;
-      }
-      const cam = cameraWorld();
-      if (o.position.distanceTo(cam) < 0.35) { buzz(); feedback('took a hit!', '#f87171'); mechRoot.remove(o); disposeObj(o); this.orbs.splice(i, 1); continue; }
-      if (o.position.length() > 12) { mechRoot.remove(o); disposeObj(o); this.orbs.splice(i, 1); }
-    }
-    mechEl.textContent = `deflected ${this.score}`;
-  },
-});
-
-// 10 — SLASH BEAM
-MECHANICS.push({
-  name: 'Slash Beam', color: '#fde047',
-  tip: 'Swing fast enough to launch an energy wave.',
-  how: ['Swing hard (>6 m/s)', 'Edge-forward fires a crescent', 'Cooldown 0.9s'],
-  setup(root) { this.d = makeDummy(0, -3); root.add(this.d); this.waves = []; this.cd = 0; },
-  update(dt, now) {
-    if (now > this.cd && swordState.speed > 6 && swordState.align > 0.5) {
-      this.cd = now + 900;
-      const w = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.05, 6, 20, Math.PI), new THREE.MeshBasicMaterial({ color: 0xfde047 }));
-      w.position.copy(swordState.tip); w.lookAt(cameraWorld());
-      const dir = new V().subVectors(dummyBodyCenter(this.d), swordState.tip).setY(0).normalize();
-      w.userData = { v: dir.clone().multiplyScalar(8) };
-      mechRoot.add(w); this.waves.push(w);
-      whoosh(8); zap(); pulseHaptics(0.9, 120); feedback('SLASH BEAM!', '#facc15');
-    }
-    for (let i = this.waves.length - 1; i >= 0; i--) {
-      const w = this.waves[i];
-      w.position.addScaledVector(w.userData.v, dt);
-      w.scale.addScalar(dt * 1.5);
-      if (segHitsSphere(w.position, w.position, dummyBodyCenter(this.d), 0.5)) {
-        flash(this.d, 0xfde047, 250); hurtDummy(this.d, 16); feedback('beam hit +16', '#facc15');
-        mechRoot.remove(w); disposeObj(w); this.waves.splice(i, 1); continue;
-      }
-      if (w.position.length() > 14) { mechRoot.remove(w); disposeObj(w); this.waves.splice(i, 1); }
-    }
-    mechEl.textContent = now > this.cd ? 'swing fast + edge-forward to fire' : 'beam cooling…';
-  },
-});
-
-// 11 — FORCE PUSH / PULL
-MECHANICS.push({
-  name: 'Force Push & Pull', color: '#38bdf8',
-  tip: 'Off-hand telekinesis on the crate.',
-  how: ['Off-hand: hold TRIGGER = pull', 'Release = shove away', 'Smash the crate into the enemy'],
-  setup(root) {
-    this.d = makeDummy(0.7, -2.6); root.add(this.d);
-    this.crate = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.8 }));
-    this.crate.position.set(-0.9, 1.1, -0.6); root.add(this.crate);
-    this.v = new V(); this.prev = false; this.pulling = false;
-  },
-  update(dt, now) {
-    const trig = gripButton('left', 0);
-    const off = offhandPos();
-    if (trig && !this.prev) this.pulling = true;
-    if (!trig && this.prev && this.pulling) { // release = shove
-      const away = new V().subVectors(this.crate.position, off).normalize();
-      this.v.copy(away).multiplyScalar(7); this.pulling = false;
-    }
-    if (trig) {
-      const dir = new V().subVectors(off, this.crate.position);
-      if (dir.length() < 4) this.v.addScaledVector(dir.normalize(), 14 * dt);
-    }
-    this.prev = trig;
-    this.v.y -= 5 * dt; this.v.multiplyScalar(1 - 0.6 * dt);
-    this.crate.position.addScaledVector(this.v, dt);
-    if (this.crate.position.y < 0.15) { this.crate.position.y = 0.15; this.v.y = 0; }
-    if (this.crate.position.distanceTo(dummyBodyCenter(this.d)) < 0.45 && this.v.length() > 2.5) {
-      flash(this.d, 0x38bdf8, 250); hurtDummy(this.d, 18); feedback('crate smash +18', '#4ade80');
-      this.v.multiplyScalar(-0.3);
-    }
-    mechEl.textContent = trig ? 'PULLING… release to shove' : 'point off-hand, hold trigger';
-  },
-});
-
-// 12 — SLICE & DICE
-MECHANICS.push({
-  name: 'Slice & Dice', color: '#f87171',
-  tip: 'Cut clean through flying blocks.',
-  how: ['Blocks fly across', 'Slice through in one motion', 'Cubes need >2.5 m/s'],
-  setup(root) { this.cubes = []; this.t = performance.now(); this.slices = 0; },
-  update(dt, now) {
-    if (now > this.t) {
-      this.t = now + 1200;
-      const cu = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.7 }));
-      const fromLeft = Math.random() < 0.5;
-      cu.position.set(fromLeft ? -2 : 2, 1.2 + Math.random() * 0.6, -1.2 - Math.random() * 0.8);
-      cu.userData = { v: new V(fromLeft ? 2.4 : -2.4, 0, 0), sliced: false };
-      mechRoot.add(cu); this.cubes.push(cu);
-    }
-    for (let i = this.cubes.length - 1; i >= 0; i--) {
-      const cu = this.cubes[i];
-      cu.position.addScaledVector(cu.userData.v, dt); cu.rotation.y += dt * 2;
-      if (swordState.speed > 2.5) {
-        const p = cu.position;
-        const mid = swordState.base.clone().lerp(swordState.tip, 0.5);
-        if (segHitsSphere(swordState.base, swordState.tip, p, 0.22) || segHitsSphere(swordState.base, swordState.tip, mid, 0.22)) {
-          this.slices++; whoosh(6); flashCrate(cu); feedback('SLICE!', '#f87171');
-          // two halves
-          for (const s of [-1, 1]) {
-            const h = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.15, 0.3), cu.material.clone());
-            h.position.copy(p); h.position.y += s * 0.09;
-            h.userData = { v: new V(cu.userData.v.x * 0.5, s * 1.2, 0), half: true, life: now };
-            mechRoot.add(h); this.cubes.push(h);
-          }
-          mechRoot.remove(cu); disposeObj(cu); this.cubes.splice(i, 1); continue;
-        }
-      }
-      if (cu.userData.half) { cu.userData.v.y -= 6 * dt; cu.position.addScaledVector(cu.userData.v, dt); }
-      if (Math.abs(cu.position.x) > 4.5 || cu.position.y < 0) { mechRoot.remove(cu); disposeObj(cu); this.cubes.splice(i, 1); }
-    }
-    mechEl.textContent = `slices: ${this.slices}`;
-  },
-});
-function flashCrate(o) { const m = o.material; m.emissive = new THREE.Color(0xff6666); m.emissiveIntensity = 0.8; setTimeout(() => (m.emissiveIntensity = 0), 160); }
-
-// 13 — BULLET TIME
-MECHANICS.push({
-  name: 'Bullet Time', color: '#818cf8',
-  tip: 'Blade near the core slows the world.',
-  how: ['Bring the tip near the core', 'Time slows, vignette closes in', 'Finish the blow in slow-mo'],
-  setup(root) {
-    this.d = makeDummy(0, -1.6); root.add(this.d);
-    this.d.userData.core = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 12), new THREE.MeshStandardMaterial({ color: 0x818cf8, emissive: 0x4f46e5, emissiveIntensity: 1.3 }));
-    this.d.userData.core.position.set(0, 1.32, 0.5); this.d.add(this.d.userData.core);
-    this.phase = 0; this.ts = 1; this.slows = 0;
-  },
-  update(dt, now) {
-    const coreC = worldPos(this.d.userData.core);
-    const near = swordState.tip.distanceTo(coreC) < 0.5;
-    const target = near ? 0.25 : 1;
-    this.ts += (target - this.ts) * Math.min(1, dt * 6);
-    if (near) this.slows++;
-    vignette.style.opacity = near ? 0.85 : 0;
-    this.phase += dt * this.ts;
-    this.d.rotation.y = Math.sin(this.phase) * 0.6;
-    this.d.userData.core.position.x = Math.sin(this.phase * 1.7) * 0.18;
-    const hit = tryBladeHit(this.d, 1.6, 300);
-    if (hit) { const dmg = near ? 22 : 9; flash(this.d, 0x818cf8, 220); hurtDummy(this.d, dmg); feedback(near ? `SLOW-MO FINISH +${dmg}` : `+${dmg} — try slow-mo`, near ? '#4ade80' : '#facc15'); }
-    mechEl.textContent = `time x${this.ts.toFixed(2)}  ·  slow-mo frames: ${this.slows}`;
-  },
-  teardown() { vignette.style.opacity = 0; },
-});
-
-// 14 — ELEMENTAL IMBUE
-MECHANICS.push({
-  name: 'Elemental Imbue', color: '#fb923c',
-  tip: 'Squeeze to change element.',
-  how: ['Grid: grip cycles FIRE→ICE→CHAIN', 'Fire = burn over time', 'Ice = freeze · Chain = arcs to 2nd dummy'],
-  setup(root) {
-    this.d = makeDummy(-0.7, -1.9); this.d2 = makeDummy(0.9, -2.4); root.add(this.d, this.d2);
-    this.elems = [
-      { name: 'FIRE', color: 0xff6600, aura: 0xff4400 },
-      { name: 'ICE', color: 0x66ccff, aura: 0x3399ff },
-      { name: 'CHAIN', color: 0xffff66, aura: 0xffff00 },
-    ];
-    this.i = 0; this.prevGrip = false; this.burn = 0; this.frozen = 0;
-  },
-  update(dt, now) {
-    const g = gripButton('right', 1) || gripButton('right', 2);
-    if (g && !this.prevGrip) { this.i = (this.i + 1) % this.elems.length; ding(); }
-    this.prevGrip = g;
-    const e = this.elems[this.i];
-    auraLight.color.setHex(e.aura); auraLight.intensity = 1.2;
-    const hit = tryBladeHit(this.d, 2, 320);
-    if (hit) {
-      let msg = '';
-      if (e.name === 'FIRE') { this.burn = now + 2500; msg = 'ignited! burning…'; }
-      else if (e.name === 'ICE') { this.frozen = now + 2500; msg = 'frozen! stops moving'; }
-      else {
-        // chain: arc to second dummy
-        const beam = new THREE.Line(new THREE.BufferGeometry().setFromPoints([dummyBodyCenter(this.d), dummyBodyCenter(this.d2)]),
-          new THREE.LineBasicMaterial({ color: 0xffff66 }));
-        mechRoot.add(beam); setTimeout(() => { mechRoot.remove(beam); disposeObj(beam); }, 130);
-        hurtDummy(this.d2, 8); msg = 'chained to 2nd target +8';
-      }
-      flash(this.d, e.color, 200); hurtDummy(this.d, 10); feedback(`${e.name}: ${msg}`, '#' + e.color.toString(16).padStart(6, '0'));
-    }
-    this.d.userData.mat.color.setHex(this.frozen > now ? 0x88ccff : 0x5b6b8c);
-    this.d2.userData.mat.color.setHex(this.frozen > now ? 0x88ccff : 0x5b6b8c);
-    if (this.burn > now && Math.random() < dt * 3) { hurtDummy(this.d, 1); flash(this.d, 0xff6600, 100); }
-    mechEl.textContent = `element: ${e.name}  ·  grip to cycle`;
-  },
-  teardown() { auraLight.intensity = 0; },
-});
-
-// 15 — SHIELD BREAK
-MECHANICS.push({
-  name: 'Shield Break', color: '#22d3ee',
-  tip: 'A full-power swing shatters the shield.',
-  how: ['Shielded: normal hits clang (0 dmg)', 'One huge swing (>7 m/s) breaks it', '3s window of full damage'],
-  setup(root) {
-    this.d = makeDummy(0, -1.8); root.add(this.d);
-    this.shield = new THREE.Mesh(new THREE.SphereGeometry(0.85, 24, 18),
-      new THREE.MeshStandardMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.28, emissive: 0x0891b2, emissiveIntensity: 0.6 }));
-    this.shield.position.y = 1.2; root.add(this.shield);
-    this.broken = 0; this.blocked = 0;
-  },
-  update(dt, now) {
-    const up = this.broken < now;
-    this.shield.visible = up;
-    if (up) this.shield.material.opacity = 0.22 + 0.12 * Math.sin(now * 0.006);
-    const hit = tryBladeHit(this.d, 1.6, 300);
-    if (hit) {
-      if (up) {
-        if (hit.speed > 7) { this.broken = now + 3000; flash(this.d, 0x22d3ee, 300); zap(); feedback('SHIELD BROKEN — 3s window!', '#4ade80'); }
-        else { this.blocked++; buzz(); pulseHaptics(0.4, 120); feedback('clang! swing harder', '#f87171'); }
-      } else { flash(this.d, 0x4ade80, 250); hurtDummy(this.d, 14); feedback('full damage +14', '#4ade80'); }
-    }
-    mechEl.textContent = up ? `shielded (${this.blocked} clangs) — one big swing` : 'window open — hit now!';
-  },
-});
-
-// dummy hit points (lab-only, respawns)
-function hurtDummy(d, dmg) {
-  d.userData.hp = (d.userData.hp ?? 100) - dmg;
-  if (d.userData.hp <= 0) { d.userData.hp = 100; d.rotation.x = -1.3; thud(); setTimeout(() => (d.rotation.x = 0), 900); }
-}
-
-// ============================================================
-// mode + lab management
-// ============================================================
-let mode = 'fight';
-let labIndex = 0;
-let activeMech = null;
-const modeBtn = document.getElementById('modeBtn');
-const prevBtn = document.getElementById('prev');
-const nextBtn = document.getElementById('next');
-const mechNo = document.getElementById('mechNo');
-const fightStats = document.getElementById('fightStats');
-const labBoard = makeBoard(720, 300, 1.5, 0.62);
-labBoard.mesh.position.set(0, 2.35, DUMMY_Z + 0.4);
-labGroup.add(labBoard.mesh);
-
-function clearMech() {
-  try { activeMech?.teardown?.(); } catch (e) { console.warn(e); }
-  while (mechRoot.children.length) {
-    const c = mechRoot.children.pop();
-    mechRoot.remove(c); disposeObj(c);
-  }
-  activeMech = null;
-}
-function loadMech(i) {
-  clearMech();
-  labIndex = (i + MECHANICS.length) % MECHANICS.length;
-  const m = MECHANICS[labIndex];
-  activeMech = m;
-  try { m.setup?.(mechRoot); } catch (e) { console.warn(e); }
-  labBoard.draw([`${labIndex + 1}/${MECHANICS.length}  ${m.name}`, m.tip, ...(m.how || [])], m.color);
-  mechNo.textContent = `${labIndex + 1}/${MECHANICS.length}`;
-}
-function setMode(m) {
-  mode = m;
-  fightGroup.visible = m === 'fight';
-  labGroup.visible = m === 'lab';
-  fightStats.style.display = m === 'fight' ? '' : 'none';
-  prevBtn.style.display = nextBtn.style.display = mechNo.style.display = m === 'lab' ? '' : 'none';
-  modeBtn.textContent = m === 'fight' ? '🎛️ Lab' : '⚔️ Fight';
-  rig.position.set(0, 0, 0); rig.rotation.set(0, 0, 0);
-  camera.position.set(0, 1.6, 0);
-  if (m === 'lab') { loadMech(labIndex); mechEl.textContent = ''; }
-  else { clearMech(); mechEl.textContent = ''; toast.draw('FIGHT — swing clean', '#4ade80'); }
-}
-modeBtn.onclick = () => setMode(mode === 'fight' ? 'lab' : 'fight');
-prevBtn.onclick = () => loadMech(labIndex - 1);
-nextBtn.onclick = () => loadMech(labIndex + 1);
-addEventListener('keydown', (e) => {
-  if (e.key === 'l' || e.key === 'L') setMode(mode === 'fight' ? 'lab' : 'fight');
-  if (e.key === '[') loadMech(labIndex - 1);
-  if (e.key === ']') loadMech(labIndex + 1);
-});
-
-// right stick in lab cycles mechanics; left-controller buttons toggle mode
-let labStickArmed = true, modeBtnPrev = false;
-function labInput() {
-  const session = renderer.xr.getSession();
-  if (!session) return;
-  // mode toggle: left controller stick-press / A-B buttons
-  const pressed = leftButtonsPressed([3, 4, 5, 8]);
-  if (pressed && !modeBtnPrev) setMode(mode === 'fight' ? 'lab' : 'fight');
-  modeBtnPrev = pressed;
-  if (mode !== 'lab') return;
-  for (const src of session.inputSources) {
-    if (src.handedness !== 'right') continue;
-    const a = src.gamepad?.axes;
-    if (!a || a.length < 2) continue;
-    const sx = a[a.length - 2];
-    if (Math.abs(sx) > 0.75 && labStickArmed) { loadMech(labIndex + Math.sign(sx)); labStickArmed = false; }
-    else if (Math.abs(sx) < 0.3) labStickArmed = true;
+    e.lookAt(cam.x, e.position.y, cam.z);
+    // state visuals
+    const frozen = u.frozenUntil > beatCount;
+    u.mat.color.setHex(frozen ? 0x88ccff : 0x5b6b8c);
+    u.mat.emissive = u.mat.emissive || new THREE.Color(0);
+    u.ring.material.opacity = u.state === 'telegraph' ? 0.35 + 0.5 * Math.abs(Math.sin(now * 0.02)) : 0;
+    if (u.state === 'telegraph') { u.mat.color.setHex(0xff5533); }
+    if (u.burning && now > u.burnUntil) u.burning = false;
+    if (u.burning && !frozen) u.mat.color.lerpColors(new THREE.Color(0x5b6b8c), new THREE.Color(0xff6600), 0.5 + 0.5 * Math.sin(now * 0.02));
+    e.position.y = 0;
   }
 }
 
 // ============================================================
 // loop
 // ============================================================
-refreshHud('swing to fight');
-setMode('fight');
+function beatVisuals() {
+  beatPulse *= 0.86;
+  const s = 1 + beatPulse * 0.35;
+  beatRing.scale.setScalar(s);
+  beatRing.material.opacity = 0.28 + beatPulse * 0.5;
+  const onb = isOnBeat();
+  beatRing.material.color.setHex(onb ? 0x4ade80 : 0x38bdf8);
+  beatdot.style.background = onb ? '#4ade80' : (beatCount % 4 === 0 ? '#38bdf8' : '#334155');
+  beatdot.style.boxShadow = onb ? '0 0 12px #4ade80' : 'none';
+}
+
+refreshHud();
+feedback('find the beat…', '#38bdf8');
 let lastT = performance.now();
 renderer.setAnimationLoop(() => {
   const now = performance.now();
   const dt = Math.min(0.1, (now - lastT) / 1000);
   lastT = now;
+  initAudio();
+
+  // beat clock
+  beatClock += dt;
+  while (beatClock >= BEAT) { beatClock -= BEAT; onBeat(); }
+  beatVisuals();
+
+  cadence = Math.max(0, cadence - CAD_DECAY * dt);
+
   locomotion(dt);
-  labInput();
+  handleVerbs(now);
   ensureSwordHeld();
-  trackSword(now);
+  trackSword();
+  tryMelee(now);
+  tryBeam(now);
+  updateBeams(dt);
+  updateForceRings(dt);
+  updateEnemies(dt, now);
   checkReload(now);
-  if (mode === 'lab' && activeMech) { try { activeMech.update(dt, now); } catch (e) { console.warn(e); } }
+  refreshHud();
+
   renderer.render(scene, camera);
 });
 addEventListener('resize', () => {
