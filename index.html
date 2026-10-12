@@ -36,9 +36,9 @@
 </script>
 </head>
 <body>
-<div id="hud">❤️ <div id="hpbar"><div id="hpfill"></div></div><span id="hpnum">100</span> · ⚔️ <span id="kills">0</span> kills · streak <span id="streak">0</span></div>
+<div id="hud"><span id="wield">🖥️</span> ❤️ <div id="hpbar"><div id="hpfill"></div></div><span id="hpnum">100</span> · ⚔️ <span id="kills">0</span> kills · streak <span id="streak">0</span></div>
 <div id="feedback"></div>
-<div id="help">VR: left stick move · right stick snap-turn · swing from the shoulder · hold BOTH grips 1s to reload · Desktop: WASD + drag mouse to swing (R reloads) · Clean arcs = damage · Flail = 0 dmg</div>
+<div id="help">VR: left stick move · right stick smooth-turn · swing from the shoulder · hold BOTH grips 1s to reload · Desktop: WASD + drag mouse to swing (R reloads) · Clean arcs = damage · Flail = 0 dmg</div>
 <div id="credit">Sword: <a href="https://polyfork.dev/asset/sword-11907e">polyfork.dev sword-11907e</a> (free, no attribution required)</div>
 
 <script type="module">
@@ -170,28 +170,51 @@ new GLTFLoader().load('./models/sword.glb', (gltf) => {
   tipObj.position.set(0, 0, -bladeLen);
 }, undefined, () => swordAnchor.add(buildFallbackSword()));
 
-// VR controllers — sword follows right hand in VR
-const ctrlR = renderer.xr.getController(0);
-const ctrlL = renderer.xr.getController(1);
-function grabSword(e) {
-  if (e.data.handedness === 'right') {
-    e.target.add(swordAnchor);
-    // hilt in the fist, guard just clear of knuckles, blade forward
-    swordAnchor.position.set(0, 0.01, -0.04);
-    swordAnchor.rotation.set(0, 0, 0);
-  }
-  initAudio();
-}
-ctrlR.addEventListener('connected', grabSword);
-ctrlL.addEventListener('connected', grabSword);
-rig.add(ctrlR, ctrlL);
-// leaving VR: hand the sword back to the desktop anchor pose
-renderer.xr.addEventListener('sessionend', () => {
-  scene.add(swordAnchor);
-  swordAnchor.position.set(0.25, 1.4, 0.9);
-  swordAnchor.rotation.set(0, 0, 0);
+// VR grips — sword rides the fist. Grip space origin sits inside the fist,
+// and parenting is re-checked every frame (one-shot connect events are missable).
+const grips = [renderer.xr.getControllerGrip(0), renderer.xr.getControllerGrip(1)];
+grips.forEach((g) => {
+  g.addEventListener('connected', (e) => {
+    g.userData.connected = true;
+    g.userData.handedness = e.data.handedness;
+  });
+  g.addEventListener('disconnected', () => {
+    g.userData.connected = false;
+    g.userData.handedness = '';
+  });
+  rig.add(g);
 });
-scene.add(ctrlR, ctrlL);
+renderer.xr.addEventListener('sessionstart', initAudio);
+const wieldEl = document.getElementById('wield');
+function ensureSwordHeld() {
+  const session = renderer.xr.getSession();
+  if (!session) {
+    if (swordAnchor.parent !== scene) {
+      scene.add(swordAnchor);
+      swordAnchor.position.set(0.25, 1.4, 0.9);
+      swordAnchor.rotation.set(0, 0, 0);
+    }
+    if (wieldEl.textContent !== '🖥️') wieldEl.textContent = '🖥️';
+    return;
+  }
+  const srcs = [...session.inputSources];
+  let target = grips.find(g => g.userData.connected && g.userData.handedness === 'right')
+    || grips.find(g => g.userData.connected);
+  if (!target) {
+    // connect events missed: fall back to session source order
+    let idx = srcs.findIndex(s => s.handedness === 'right');
+    if (idx < 0) idx = srcs.findIndex(s => s.handedness && s.handedness !== 'none');
+    if (idx >= 0 && grips[idx]) target = grips[idx];
+  }
+  if (target && swordAnchor.parent !== target) {
+    target.add(swordAnchor);
+    swordAnchor.position.set(0, 0.01, -0.02);
+    swordAnchor.rotation.set(0, 0, 0);
+    const tag = target.userData.handedness === 'left' ? '🎮L' : '🎮R';
+    wieldEl.textContent = tag;
+    drawLabel('sword: ' + tag, 'swing to fight', '#4ade80');
+  }
+}
 
 // Desktop fallback: drag mouse to swing sword
 let dragging = false, px = 0, py = 0;
@@ -421,7 +444,6 @@ addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
 addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
 
 const _fwd = new THREE.Vector3(), _strafe = new THREE.Vector3(), _mv = new THREE.Vector3();
-let snapArmed = true;
 const ARENA_R = 4, MOVE_SPEED = 2.4;
 function clampArena() {
   const r = Math.hypot(rig.position.x, rig.position.z);
@@ -446,10 +468,7 @@ function locomotion(dt) {
           clampArena();
         }
       } else if (src.handedness === 'right') {
-        if (Math.abs(sx) > 0.7 && snapArmed) {
-          rig.rotation.y -= Math.PI / 4 * Math.sign(sx); // 45° snap
-          snapArmed = false;
-        } else if (Math.abs(sx) < 0.3) snapArmed = true;
+        if (Math.abs(sx) > 0.2) rig.rotation.y -= sx * 1.8 * dt; // smooth turn
       }
     }
   } else {
@@ -477,6 +496,7 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(0.1, (now - lastT) / 1000);
   lastT = now;
   locomotion(dt);
+  ensureSwordHeld();
   checkReload(now);
   // idle enemy bob (skip while dead)
   if (!deadUntil) enemy.position.y = Math.sin(now * 0.0012) * 0.03;
