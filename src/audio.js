@@ -456,6 +456,29 @@ export class AudioEngine {
     this._osc('sine', 200, 55, t, 0.3, 0.45, o);
     this.element(el, pos, 0.8);
   }
+  // Blade ignition, then a low filtered hum for as long as the beam stays charged.
+  charge(el) {
+    if (!this.running) return null;
+    const ac = this.ctx, t = this.now, o = this._out(null, 0.8, 0.3);
+    const base = { fire: 50, ice: 57, volt: 53 }[el] || 52;
+    this._noise(t, 0.28, 0.16, o, { f0: 1200, f1: 7000, q: 4, attack: 0.012 });
+    this._osc('triangle', hz(base + 24), hz(base + 31), t, 0.22, 0.05, o, 0.006);
+    const o1 = ac.createOscillator(), o2 = ac.createOscillator(), lp = ac.createBiquadFilter(), g = ac.createGain();
+    const lfo = ac.createOscillator(), lg = ac.createGain();
+    o1.type = 'sawtooth'; o1.frequency.value = hz(base); o2.type = 'sawtooth'; o2.frequency.value = hz(base) * 1.006;
+    lp.type = 'lowpass'; lp.frequency.value = 520; lp.Q.value = 3;
+    lfo.frequency.value = 5.5; lg.gain.value = 140; lfo.connect(lg).connect(lp.frequency);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.045, t + 0.12);
+    o1.connect(lp); o2.connect(lp); lp.connect(g).connect(this._out(null, 1));
+    [o1, o2, lfo].forEach((x) => x.start(t));
+    return {
+      stop: () => {
+        const n = this.now;
+        g.gain.cancelScheduledValues(n); g.gain.setValueAtTime(g.gain.value, n); g.gain.exponentialRampToValueAtTime(0.0001, n + 0.1);
+        [o1, o2, lfo].forEach((x) => x.stop(n + 0.12));
+      },
+    };
+  }
   dud(pos) {
     if (!this.running) return;
     const t = this.now, o = this._out(pos, 0.6);

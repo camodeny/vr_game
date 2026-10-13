@@ -58,9 +58,11 @@ export class Player {
     };
     this.hand = { pos: new V(), vel: new V(), hist: [] };
     this.aim = { origin: new V(), dir: new V(0, 0, -1) };
+    this.pointer = new V(0, 0, -1); // desktop: world ray through the mouse cursor
 
     this.input = {
       grab: false, grabDown: false, grabUp: false, pushDown: false, elemNext: false, elemPrev: false, elemSet: -1,
+      charge: false, chargeDown: false,                    // sword trigger / desktop left mouse: charge the beam
       menu: false, hubNow: false, toggleDown: false, // off-hand X (hold) / Y; desktop Esc / T
     };
     this._prev = { sword: [], force: [] };
@@ -93,8 +95,9 @@ export class Player {
         this.camera.rotation.x = THREE.MathUtils.clamp(this.camera.rotation.x - e.movementY * 0.003, -1.1, 1.1);
       }
     });
-    addEventListener('pointerdown', (e) => { if (e.button === 2) this._look = true; });
-    addEventListener('pointerup', (e) => { if (e.button === 2) this._look = false; });
+    addEventListener('pointerdown', (e) => { if (e.button === 2) this._look = true; if (e.button === 0) this._deskCharge = true; });
+    addEventListener('pointerup', (e) => { if (e.button === 2) this._look = false; if (e.button === 0) this._deskCharge = false; });
+    addEventListener('blur', () => { this._deskCharge = false; this._look = false; });
     addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
@@ -168,7 +171,8 @@ export class Player {
 
   _readInput(vr, now) {
     const I = this.input;
-    I.grabDown = I.grabUp = I.pushDown = I.elemNext = I.elemPrev = I.hubNow = I.toggleDown = false; I.elemSet = -1;
+    I.grabDown = I.grabUp = I.pushDown = I.elemNext = I.elemPrev = I.hubNow = I.toggleDown = I.chargeDown = false; I.elemSet = -1;
+    let charge;
     if (vr) {
       const read = (hand) => {
         const gp = this._src(hand)?.gamepad;
@@ -183,6 +187,7 @@ export class Player {
       I.menu = !!fo.b[BTN.a];                              // X on the left controller (hold)
       const g = !!fo.b[BTN.trigger];
       I.grabDown = g && !I.grab; I.grabUp = !g && I.grab; I.grab = g;
+      charge = !!sw.b[BTN.trigger];
       // reload: squeeze both grips together and hold
       const sq = { sword: !!sw.b[BTN.squeeze], force: !!fo.b[BTN.squeeze] };
       for (const r of ['sword', 'force']) if (sq[r] && !this._prev[r][BTN.squeeze]) this._sq[r] = now;
@@ -202,7 +207,9 @@ export class Player {
       if (this._deskToggle) { I.toggleDown = true; this._deskToggle = false; }
       if (this._deskHub) { I.hubNow = true; this._deskHub = false; }
       I.menu = false;
+      charge = !!this._deskCharge;
     }
+    I.chargeDown = charge && !I.charge; I.charge = charge;
   }
 
   _stick(ax) { // xr-standard: thumbstick is axes[2,3]; some runtimes only expose [0,1]
@@ -266,6 +273,8 @@ export class Player {
     this.deskQ.slerp(_q, 1 - Math.exp(-dt * 25));
     this.deskSword.position.copy(this.deskHand);
     this.deskSword.quaternion.copy(this.deskQ);
+    this.camera.getWorldPosition(_b);
+    this.pointer.set(this.mouse.x, this.mouse.y, 0.5).unproject(this.camera).sub(_b).normalize();
   }
 
   _trackBlade(dt, now) {

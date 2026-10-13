@@ -7,7 +7,7 @@ Every action is judged against the beat: **PERFECT** (±70 ms), **GOOD** (±150 
 | | VR | Desktop |
 |---|---|---|
 | Slash | swing the sword (right hand) | move the mouse |
-| Beam (costs ⚡) | big on-beat swing at range | fast mouse flick |
+| Beam (costs ⚡) | hold the sword trigger, then swing on the beat | hold left click, then flick |
 | Element | A / B | E, 1–3 |
 | Grab → throw | off-hand trigger, flick and release | hold Q, release |
 | Push (costs ⚡) | off-hand grip | F |
@@ -18,6 +18,7 @@ Every action is judged against the beat: **PERFECT** (±70 ms), **GOOD** (±150 
 - **Reactions:** hit an enemy with one element, then a different one: Fire + Ice = **Shatter**, Ice + Volt = **Superconduct**, Volt + Fire = **Overload**.
 - **Interrupts:** red arcs telegraph a strike two beats ahead. Block it, step out of reach, or land a PERFECT hit to interrupt it.
 - **Ring outs:** an on-beat push launches enemies off the platform.
+- **Aiming beams:** while charged, point the blade at an enemy (desktop: the cursor) to lock it; spinning arcs appear underneath and a lane runs along the floor. A charged swing on the beat sends the crescent to the lock. With no lock, it flies where the blade pointed at the fastest point of the swing. Raising or drawing back the blade never fires.
 - Add `?lefty` to the URL to swap hands.
 
 ## Training hall
@@ -26,7 +27,7 @@ You start in a hub. Slash a crystal to choose a mode (on desktop, use the button
 
 - **PLAY**: the full wave-based game.
 - **RHYTHM**: an early/late timing chart for every hit. Press **Y** (desktop **T**) to calibrate your input offset; it's saved in the browser.
-- **BEAM**: explains every big swing (too slow, too short, off beat, too close) with speed and arc meters.
+- **BEAM**: explains every swing (not charged, too slow, too short, off beat, connected in melee) with speed and arc meters.
 - **FORCE**: dummies at the platform edge for grab, throw and push practice, including ring-outs.
 - **ELEMENTS**: three dummies for mixing reactions.
 - **PARRY**: a grunt that attacks every bar; counts parries, blocks, interrupts and dodges.

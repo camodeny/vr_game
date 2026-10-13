@@ -21,8 +21,8 @@ export const COST = { beam: 20, push: 20, grab: 20 };
 export const SWING = {
   slashSpeed: 2.2,   // below this a contact is just a tap
   slashArc: 0.2,     // tip must have travelled this far in the last 160 ms
-  beamSpeed: 5.6,    // a heavy swing through air at this speed fires a beam
-  beamArc: 0.5,
+  beamSpeed: 4.2,    // with the blade charged (sword trigger), a swing this fast fires a beam
+  beamArc: 0.4,
 };
 
 export const DMG = {

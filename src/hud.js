@@ -197,13 +197,13 @@ export class Board {
     x.font = `700 32px ${FONT}`; x.fillStyle = '#c9d2ff';
     x.fillText('TRAINING HALL — slash a crystal to choose', W / 2, 172);
     const rows = vr ? [
-      ['SWORD', 'Slash on the beat · big swing at range fires a beam'],
+      ['SWORD', 'Slash on the beat · hold TRIGGER + swing: beam (⚡)'],
       ['A / B', 'Change element — mix two on one enemy for a reaction'],
       ['OFF-HAND', 'Trigger: grab, flick to throw · Grip: force push'],
       ['DEFEND', 'Red = incoming. Block with your blade, or PERFECT hit to interrupt'],
       ['STICKS', 'Left: move · Right: turn · Squeeze both grips 1s: reload'],
     ] : [
-      ['MOUSE', 'Move the sword — swing through enemies on the beat'],
+      ['MOUSE', 'Swing through enemies on the beat · hold click + flick: beam'],
       ['1 2 3 / E', 'Change element — mix two on one enemy for a reaction'],
       ['Q / F', 'Q hold: grab, release to throw · F: force push'],
       ['DEFEND', 'Red = incoming. Block with your blade, or PERFECT hit to interrupt'],

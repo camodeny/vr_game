@@ -21,7 +21,7 @@ const STATIONS = {
     slots: [{ type: 'grunt', at: [0, -1.4], cfg: passive(400) }],
   },
   beam: {
-    name: 'BEAM', sub: 'heavy swing → crescent', color: 0xb68cff, spot: [0, 0],
+    name: 'BEAM', sub: 'charge · aim · swing', color: 0xb68cff, spot: [0, 0],
     slots: [[-2.2, -4.5], [0, -5.2], [2.2, -4.5]].map((at) => ({ type: 'grunt', at, cfg: passive(160) })),
   },
   force: {
@@ -253,19 +253,22 @@ export class Sandbox {
   // Beam station: segment the blade's motion into swings and explain each one.
   _trackSwing() {
     const B = this.player.blade, sp = B.speed;
-    if (!this.swing && sp > 2.6) this.swing = { peak: 0, arc: 0, events: new Set(), grade: null };
+    if (!this.swing && sp > 2.6) this.swing = { peak: 0, arc: 0, events: new Set(), grade: null, charged: false };
     const w = this.swing;
     if (!w) return;
+    w.charged ||= this.game.charged;
     w.peak = Math.max(w.peak, sp);
     w.arc = Math.max(w.arc, this.player.arc(200));
     if (sp > 1.8) return;
     this.swing = null;
     if (w.peak < 3) return;
     let text, color = '#f59e0b';
-    if (w.events.has('fired')) { text = `BEAM · ${w.grade.toUpperCase()}`; color = GRADE_CSS[w.grade]; this._count('beams'); }
+    if (w.events.has('fired')) { text = `BEAM · ${w.grade.toUpperCase()}${w.locked ? ' · LOCKED' : ''}`; color = GRADE_CSS[w.grade]; this._count('beams'); }
     else if (w.events.has('dud')) { text = 'OFF BEAT — fizzled'; color = '#8a90a8'; this._count('duds'); }
-    else if (w.events.has('close')) text = 'TOO CLOSE — that was a melee swing';
+    else if (w.events.has('close')) text = 'CONNECTED — that was a melee hit';
     else if (w.events.has('cooldown')) text = 'COOLDOWN — one beam per beat';
+    else if (w.events.has('windup')) text = 'WIND-UP — beams leave on the cut, not the draw';
+    else if (!w.charged) { if (w.peak < SWING.beamSpeed) return; text = `NOT CHARGED — hold ${this.player.presenting ? 'TRIGGER' : 'left mouse'}`; }
     else if (w.peak < SWING.beamSpeed) text = 'TOO SLOW';
     else if (w.arc < SWING.beamArc) text = 'TOO SHORT — longer arc';
     else text = 'NO BEAM';
@@ -292,8 +295,9 @@ export class Sandbox {
       this._count(d.grade);
       this._last(d.grade === 'off' ? 'OFF BEAT' : d.grade.toUpperCase(), GRADE_CSS[d.grade], timing(d.off));
     } else if (m === 'beam' && type === 'beam') {
-      if (this.swing) { this.swing.events.add(d.kind); if (d.kind === 'fired') this.swing.grade = d.grade; }
+      if (this.swing) { this.swing.events.add(d.kind); if (d.kind === 'fired') Object.assign(this.swing, { grade: d.grade, locked: d.locked }); }
     } else if (m === 'beam' && type === 'beamHit') this._count('hits');
+    else if (m === 'beam' && type === 'charge') this._last('CHARGED', '#b68cff', 'point at a dummy, then swing through it on the beat');
     else if (m === 'force') {
       if (type === 'grab' && d.kind !== 'miss') { this._count('grabs'); this._last(d.kind === 'yank' ? 'YANK — off beat, no hold' : 'GRABBED', d.kind === 'yank' ? '#8a90a8' : '#ffe2a0', 'flick your hand and release to throw'); }
       else if (type === 'grab') this._last('NOTHING IN SIGHTS', '#8a90a8', 'point your off-hand until a gold ring appears');
@@ -345,13 +349,13 @@ export class Sandbox {
       }
       case 'beam':
         d.lines = [
-          'Swing hard through empty air ON the beat to launch a crescent.',
-          `Needs ${SWING.beamSpeed} m/s and a ${SWING.beamArc} m arc. Near a target it's a melee swing instead.`,
-          'The crescent follows your swing plane: flat swing → flat wave.',
+          `Hold ${vr ? 'the sword TRIGGER' : 'the LEFT mouse button'} to charge — then swing ON the beat.`,
+          `${vr ? 'Point the blade' : 'Put the cursor'} at a dummy to lock it (spinning arcs): the beam goes there.`,
+          `No lock? It flies along your ${vr ? 'blade' : 'cursor'} mid-swing. Flat swing → flat wave.`,
         ];
         d.bars = this.stats.bars;
         d.stats = [['SWINGS', cnt('swings')], ['BEAMS', cnt('beams')], ['TARGET HITS', cnt('hits')], ['FIZZLED', cnt('duds')]];
-        if (!d.last) d.last = { text: 'swing big!', color: '#b68cff' };
+        if (!d.last) d.last = { text: `hold ${vr ? 'TRIGGER' : 'left mouse'} to charge`, color: '#b68cff' };
         break;
       case 'force':
         d.lines = vr ? [

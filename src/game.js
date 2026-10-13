@@ -1,7 +1,7 @@
 // Game rules: one clock, four verbs.
 //   Rhythm  — every action is judged against the beat (PERFECT / GOOD / OFF).
-//   Sword   — on-beat slashes build combo and Cadence ⚡; a heavy swing through
-//             air spends ⚡ to fire a crescent beam.
+//   Sword   — on-beat slashes build combo and Cadence ⚡; hold the sword trigger
+//             to charge the blade, and a swing spends ⚡ to fire a crescent beam.
 //   Force   — off-hand grabs (hold, then flick to throw) and pushes; on-beat = strong.
 //   Element — the blade's element marks enemies; a second, different element
 //             on the same enemy triggers a reaction.
@@ -67,6 +67,30 @@ export class Game {
     this.aimRing.rotation.x = -Math.PI / 2; this.aimRing.visible = false;
     this.scene.add(this.aimRing);
 
+    // beam lock: three arcs under the target, and a dashed lane on the floor
+    this.beamRing = new THREE.Group();
+    const arcMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
+    for (let i = 0; i < 3; i++) {
+      const m = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.7, 12, 1, (i * 2 * Math.PI) / 3, 1.3), arcMat);
+      m.rotation.x = -Math.PI / 2;
+      this.beamRing.add(m);
+    }
+    this.beamRing.visible = false;
+    this.lane = new THREE.Mesh(new THREE.PlaneGeometry(0.06, 1).rotateX(-Math.PI / 2).translate(0, 0, -0.5), new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color() }, uT: { value: 0 }, uLen: { value: 6 }, uA: { value: 0 } },
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `uniform vec3 uColor; uniform float uT, uLen, uA; varying vec2 vUv;
+        void main() {
+          float d = vUv.y * uLen, dash = step(0.4, fract(d * 2.5 - uT * 4.0));
+          float a = uA * smoothstep(0.3, 0.9, d) * (1.0 - vUv.y) * dash * (1.0 - abs(vUv.x - 0.5) * 1.6);
+          gl_FragColor = vec4(uColor * 1.5, a);
+        }`,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
+    }));
+    this.lane.position.y = 0.025; this.lane.visible = false;
+    this.scene.add(this.beamRing, this.lane);
+    this.chargeK = 0; this.laneDir = new V(0, 0, -1);
+
     this.aura = new THREE.PointLight(0xff8a2a, 2, 3.5, 2);
     this.player.sword.mid.add(this.aura);
     this.trail = new Trail(this.scene);
@@ -76,11 +100,13 @@ export class Game {
   emit(type, data = {}) { this.sandbox?.event(type, data); }
 
   _resetRun() {
+    this.chargeSnd?.stop();
     Object.assign(this, {
       hp: PLAYER_HP, cad: CAD_START, combo: 0, comboBeat: 0, tierIdx: 0, score: 0, kills: 0, maxCombo: 0,
       perfects: 0, judged: 0, reactions: 0, parries: 0, wave: 0, wavePhase: 'none', queue: [], maxAlive: 2,
       maxAttackers: 1, waveScale: 1, invuln: 0, held: null, heldBeats: 0, holdSnd: null,
       beamArmed: true, beamCd: 0, lastMeleeT: 0, lastAttackBeat: -1, aimTarget: null,
+      charged: false, chargeSnd: null, beamSwing: null, beamLock: null,
     });
   }
 
@@ -126,7 +152,7 @@ export class Game {
       grab: vr ? 'Off-hand TRIGGER: grab · flick your hand and release to throw' : 'Hold Q to grab · release to throw',
       push: vr ? 'Off-hand GRIP: force push — knock them off the edge' : 'F: force push — knock them off the edge',
       element: vr ? 'Press A / B to switch element, hit again for a REACTION' : 'Press E or 1–3 to switch element, hit again for a REACTION',
-      beam: 'Big swing at range on the beat fires a beam (⚡)',
+      beam: vr ? 'Hold the sword TRIGGER, then swing at a target on the beat: BEAM (⚡)' : 'Hold the left mouse button, then flick on the beat: BEAM (⚡)',
     };
     if (H[key]) this.comboHud.setHint(H[key], 5.5);
   }
@@ -146,7 +172,10 @@ export class Game {
       this._melee(now);
       this._beamCheck(now);
       this._force(dt, t);
-    } else if (P.input.grabUp && this.held) this._release(true);
+    } else {
+      if (P.input.grabUp && this.held) this._release(true);
+      this._setCharged(false);
+    }
     for (const e of [...this.enemies]) e.update(dt, t, P.head, this.enemies);
     if (this.live) this._trackGuards();
     for (let i = this.falling.length - 1; i >= 0; i--) {
@@ -166,6 +195,7 @@ export class Game {
     if (!this.live) return;
     const down = b % 4 === 0;
     this.player.pulse('force', down ? 0.22 : 0.1, 14);   // a metronome you can feel
+    if (this.charged) this.player.pulse('sword', down ? 0.3 : 0.16, 18); // and a charged blade throbs with it
     if (this.state === 'play') this._waveBeat(b);
     else this.sandbox?.onBeat(b);
     for (const e of [...this.enemies]) e.onBeat(b);
@@ -254,6 +284,7 @@ export class Game {
     for (const e of this.falling) this.scene.remove(e.root);
     this.falling.length = 0;
     for (const b of [...this.fx.beams]) this.fx.removeBeam(b);
+    this.beamSwing = null; this.beamLock = null;
   }
   requestAttack(e) {
     if (this.state !== 'play' || this.lastAttackBeat === this.beat) return false;
@@ -327,62 +358,129 @@ export class Game {
     if (e.alive && e.hp <= 0) this._kill(e, dir);
   }
 
+  // ------------------------------------------------------------------ beam
+  // Hold the sword trigger to charge the blade, and point it to lock a target.
+  // A fast swing then releases a crescent at the swing's peak speed (where a
+  // real cut would land). It flies to the lock; with no lock, it flies where
+  // the blade pointed at that moment, snapping to an enemy close to that line.
   _beamCheck(now) {
-    const P = this.player, B = P.blade;
+    const P = this.player, B = P.blade, I = P.input;
+    if (I.chargeDown && this.cad < COST.beam) {
+      this.emit('beam', { kind: 'denied' }); this._denied();
+      this.fx.text.spawn('need ⚡', B.tip, { color: '#f43f5e', size: 0.05 });
+    }
+    this._setCharged(I.charge && this.cad >= COST.beam);
     if (!B.init) return;
     if (B.speed < 3) this.beamArmed = true;
-    if (!this.beamArmed || B.speed < SWING.beamSpeed) return;
-    if (now - this.lastMeleeT < 250) { this.beamArmed = false; return; }
-    if (P.arc(200) < SWING.beamArc) return;
-    for (const e of this.enemies) if (e.targetable && e.center.distanceTo(B.tip) < 0.9) { this.emit('beam', { kind: 'close' }); return; } // about to connect in melee
-    this.beamArmed = false;
-    const j = this.judge();
-    if (j.grade === 'off') {
-      this.emit('beam', { kind: 'dud', off: j.off });
-      this.audio.dud(B.tip);
-      this.fx.particles.burst(B.tip, 8, 0x8a90a8, { speed: 1.5, size: 0.03, life: 0.3 });
-      return;
+    let S = this.beamSwing;
+    if (!S) {
+      if (this.charged && B.speed < 2.5) this._updateLock();
+      if (!this.charged || !this.beamArmed || B.speed < SWING.beamSpeed || P.arc(200) < SWING.beamArc) return;
+      this.beamArmed = false;
+      S = this.beamSwing = { start: now, peak: 0, at: now, j: null, dir: new V(), mid: new V(), vel: new V() };
     }
-    if (now < this.beamCd) { this.emit('beam', { kind: 'cooldown' }); return; }
-    if (this.cad < COST.beam) { this.emit('beam', { kind: 'denied' }); this._denied(); this.fx.text.spawn('need ⚡', B.tip, { color: '#f43f5e', size: 0.05 }); return; }
-    this.cad -= COST.beam;
-    this.beamCd = now + BEAT * 900;
-    this._fireBeam(j);
+    if (B.speed > S.peak) {
+      Object.assign(S, { peak: B.speed, at: now, j: this.judge() });
+      this._beamAim(S.dir); S.mid.copy(B.mid); S.vel.copy(B.vel);
+    }
+    if (this.lastMeleeT >= S.start) { this.beamSwing = null; this.emit('beam', { kind: 'close' }); return; } // it connected: a melee hit
+    if (B.speed > S.peak * 0.8 && now - S.at < 90) return; // still accelerating through the cut
+    this.beamSwing = null;
+    this._releaseBeam(S, now);
   }
-  _fireBeam(j) {
-    const P = this.player, B = P.blade, el = ELEMENTS[this.el];
-    const dir = new V().copy(P.flatFwd).multiplyScalar(0.6);
-    _a.subVectors(B.tip, P.head).setY(0);
-    if (_a.lengthSq() > 1e-4) dir.addScaledVector(_a.normalize(), 0.4);
-    dir.normalize();
-    let best = null, bc = Math.cos(0.5);
+  _setCharged(on) {
+    if (on === this.charged) return;
+    this.charged = on;
+    if (on) {
+      this.chargeSnd = this.audio.charge(ELEMENTS[this.el].id);
+      this.player.pulse('sword', 0.35, 40);
+      this.emit('charge');
+    } else {
+      this.chargeSnd?.stop(); this.chargeSnd = null;
+      this.beamLock = null; this.beamSwing = null;
+    }
+  }
+  // Where a beam would fly right now: the blade's heading on the floor plane,
+  // handing over to the gaze only as the blade nears vertical. On desktop the
+  // mouse cursor aims instead.
+  _beamAim(out) {
+    const P = this.player, d = P.vr ? P.blade.dir : P.pointer, h = Math.hypot(d.x, d.z);
+    const w = THREE.MathUtils.smoothstep(h, 0.15, 0.45);
+    out.set(d.x, 0, d.z).multiplyScalar(w / (h || 1)).addScaledVector(P.flatFwd, 1 - w);
+    if (out.lengthSq() < 1e-6) out.copy(P.flatFwd);
+    return out.normalize();
+  }
+  _beamPick(origin, dir, minCos) {
+    let best = null, bc = minCos;
     for (const e of this.enemies) {
       if (!e.targetable) continue;
-      _b.subVectors(e.center, B.mid).setY(0);
+      _b.subVectors(e.center, origin).setY(0);
       if (_b.lengthSq() < 0.25) continue;
       const c = _b.normalize().dot(dir);
       if (c > bc) { bc = c; best = e; }
     }
-    if (best) dir.subVectors(best.center, B.mid).setY(0).normalize();
-    const sx = new V().copy(B.vel).addScaledVector(dir, -B.vel.dot(dir));
+    return best;
+  }
+  // While charged and between swings, lock onto whatever the blade points at.
+  // The lock holds through a wind-up: only a blade clearly pointing at another
+  // enemy in view moves it (never the gaze fallback), and looking away drops it.
+  _updateLock() {
+    const P = this.player, aim = this._beamAim(_c), L = this.beamLock;
+    const inView = (e) => _a.subVectors(e.center, P.head).setY(0).normalize().dot(P.flatFwd) > Math.cos(1.2);
+    const d = P.vr ? P.blade.dir : P.pointer, pointing = Math.hypot(d.x, d.z) > 0.45;
+    const best = L && !pointing ? null : this._beamPick(P.head, aim, Math.cos(0.42));
+    if (best && best !== L && inView(best)) {
+      this.beamLock = best;
+      this.audio.tick(false); P.pulse('sword', 0.12, 12);
+    } else if (L && (!L.targetable || !inView(L))) this.beamLock = null;
+  }
+  _releaseBeam(S, now) {
+    const j = S.j, v = S.vel, sp = v.length() || 1;
+    if (v.dot(this.player.flatFwd) < -0.3 * sp || v.y > 0.75 * sp) { // raising or drawing back the blade
+      this.beamArmed = true; this.emit('beam', { kind: 'windup' });
+      return;
+    }
+    if (j.grade === 'off') {
+      this.emit('beam', { kind: 'dud', off: j.off });
+      this.audio.dud(S.mid);
+      this.fx.particles.burst(S.mid, 8, 0x8a90a8, { speed: 1.5, size: 0.03, life: 0.3 });
+      return;
+    }
+    if (now < this.beamCd) { this.emit('beam', { kind: 'cooldown' }); return; }
+    if (this.cad < COST.beam) { this.emit('beam', { kind: 'denied' }); this._denied(); return; }
+    this.cad -= COST.beam;
+    this.beamCd = now + BEAT * 900;
+    this._fireBeam(S, j);
+  }
+  _fireBeam(S, j) {
+    const el = ELEMENTS[this.el], dir = S.dir.clone(), origin = S.mid.clone();
+    origin.y = clamp(origin.y, 0.8, 1.7);
+    const L = this.beamLock;
+    let target = L && L.targetable ? L : null;
+    if (!target) {
+      if (dir.dot(this.player.flatFwd) < Math.cos(1.3)) dir.copy(this.player.flatFwd); // never behind your gaze
+      target = this._beamPick(origin, dir, Math.cos(0.45));
+    }
+    if (target) dir.subVectors(target.center, origin).setY(0).normalize();
+    const sx = new V().copy(S.vel).addScaledVector(dir, -S.vel.dot(dir));
     if (sx.lengthSq() < 1e-4) sx.set(-dir.z, 0, dir.x);
     sx.normalize();
     const sz = new V().crossVectors(sx, dir).normalize();
     sx.crossVectors(dir, sz).normalize();
     const obj = makeCrescent(el.color);
     obj.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(sx, dir, sz));
-    obj.position.copy(B.mid);
+    obj.position.copy(origin);
     Object.assign(obj.userData, {
       vel: dir.clone().multiplyScalar(12), life: 1.35, age: 0, hit: new Set(),
       dmg: DMG.beam * GRADE_MULT[j.grade] * this.tierInfo().dmg, el: el.id, grade: j.grade, sx,
     });
     this.fx.addBeam(obj);
     this._action(j.grade);
-    this.emit('beam', { kind: 'fired', grade: j.grade, off: j.off });
-    this.audio.beam(B.mid, el.id);
+    this.emit('beam', { kind: 'fired', grade: j.grade, off: j.off, locked: !!target && target === L });
+    this.audio.beam(origin, el.id);
     this.player.pulse('sword', 0.9, 90);
-    this.fx.particles.burst(B.mid, 22, el.color, { dir, spread: 0.6, speed: 5, size: 0.04, life: 0.35 });
-    this.fx.text.spawn(j.grade === 'perfect' ? 'PERFECT BEAM' : 'BEAM', _a.copy(B.tip).add(new V(0, 0.15, 0)), { color: el.css, size: 0.055 });
+    this.fx.particles.burst(origin, 22, el.color, { dir, spread: 0.6, speed: 5, size: 0.04, life: 0.35 });
+    this.fx.text.spawn(j.grade === 'perfect' ? 'PERFECT BEAM' : 'BEAM', _a.copy(origin).add(new V(0, 0.2, 0)), { color: el.css, size: 0.055 });
   }
   _updateBeams(dt) {
     for (const obj of [...this.fx.beams]) {
@@ -434,6 +532,7 @@ export class Game {
     this.el = n;
     const el = ELEMENTS[n], B = this.player.blade;
     this.audio.elementSwitch(el.id);
+    if (this.charged) { this.chargeSnd?.stop(); this.chargeSnd = this.audio.charge(el.id); }
     this.swapFlash = 1;
     this.player.pulse('sword', 0.25, 20);
     for (let i = 0; i < 12; i++) {
@@ -896,15 +995,18 @@ export class Game {
     const u = S.runeMat.uniforms;
     u.uFill.value += (this.cad / CAD_MAX - u.uFill.value) * Math.min(1, dt * 10);
     u.uColor.value.setHex(el.color);
-    u.uPulse.value = this.pulse;
+    this.chargeK += ((this.charged ? 1 : 0) - this.chargeK) * Math.min(1, dt * 14);
+    const ck = this.chargeK;
+    u.uPulse.value = Math.max(this.pulse, ck * (0.7 + 0.3 * this.pulse));
     this.runeFlash *= Math.exp(-dt * 6); u.uFlash.value = this.runeFlash;
     this.swapFlash *= Math.exp(-dt * 5);
-    S.steel.emissive.setHex(el.color).multiplyScalar(0.04 + this.pulse * 0.06 + this.tierIdx * 0.025 + this.swapFlash * 0.5);
+    S.steel.emissive.setHex(el.color).multiplyScalar(0.04 + this.pulse * 0.06 + this.tierIdx * 0.025 + this.swapFlash * 0.5 + ck * (0.3 + this.pulse * 0.4));
     S.gemMat.color.setHex(el.color);
     this.aura.color.setHex(el.color);
-    this.aura.intensity = 1.2 + this.pulse * 1.2 + this.tierIdx * 0.5 + this.swapFlash * 3;
+    this.aura.intensity = 1.2 + this.pulse * 1.2 + this.tierIdx * 0.5 + this.swapFlash * 3 + ck * (2 + this.pulse * 2);
+    this._beamAimFx(dt, t, el);
     if (B.init) {
-      const P = this.fx.particles, rate = 6 + this.tierIdx * 6;
+      const P = this.fx.particles, rate = 6 + this.tierIdx * 6 + ck * 30;
       if (Math.random() < dt * rate) {
         _a.lerpVectors(B.base, B.tip, 0.15 + Math.random() * 0.85);
         if (el.id === 'fire') P.emit(_a, _b.set(0, 0.4 + Math.random() * 0.4, 0), Math.random() < 0.5 ? 0xff8a2a : 0xffc070, { size: 0.03, life: 0.6, grav: 0.5, drag: 1, flicker: true });
@@ -926,8 +1028,33 @@ export class Game {
     }
   }
 
+  // Charged blade: arcs under the locked target, and a lane showing where a beam would go.
+  _beamAimFx(dt, t, el) {
+    const P = this.player, L = this.charged && this.live && this.beamLock?.targetable ? this.beamLock : null;
+    this.beamRing.visible = !!L;
+    if (L) {
+      this.beamRing.position.set(L.root.position.x, 0.04, L.root.position.z);
+      this.beamRing.rotation.y += dt * 2.4;
+      this.beamRing.scale.setScalar(1 + this.pulse * 0.12);
+      this.beamRing.children[0].material.color.setHex(el.color);
+    }
+    const u = this.lane.material.uniforms, slow = P.blade.speed < 2.5;
+    u.uA.value += ((this.charged && this.live ? (slow ? 0.6 : 0.15) : 0) - u.uA.value) * Math.min(1, dt * 12);
+    this.lane.visible = u.uA.value > 0.01;
+    if (!this.lane.visible) return;
+    let len = 6;
+    if (L) { _a.subVectors(L.root.position, P.head).setY(0); len = Math.max(0.5, _a.length() - 0.6); _a.normalize(); }
+    else this._beamAim(_a);
+    this.laneDir.lerp(_a, Math.min(1, dt * 18)).normalize();
+    this.lane.position.set(P.head.x, 0.025, P.head.z);
+    this.lane.rotation.y = Math.atan2(-this.laneDir.x, -this.laneDir.z);
+    this.lane.scale.z = len;
+    u.uLen.value = len; u.uT.value = t; u.uColor.value.setHex(el.color);
+  }
+
   _hud(dt, now) {
     const P = this.player, tier = this.tierInfo();
+    if (this.state === 'play' && this.cad >= 60) this.firstSeen('beam');
     const hold = P.reload > 0 ? { label: 'RELOADING', k: P.reload } : this.sandbox?.holdK > 0 ? { label: 'BACK TO HUB', k: this.sandbox.holdK } : null;
     const st = {
       hp: this.hp, hpMax: PLAYER_HP, cad: this.cad, el: this.el, score: this.score, hold, combo: this.combo,
