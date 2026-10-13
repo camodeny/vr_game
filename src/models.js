@@ -350,7 +350,7 @@ export function buildCaster() {
   };
 }
 
-// The orb casters throw — and the crystal you slash to start a run.
+// The orb casters throw.
 export function buildOrb() {
   const g = new THREE.Group();
   GEO.orb ??= { core: new THREE.IcosahedronGeometry(0.09, 1), shell: new THREE.IcosahedronGeometry(0.14, 1), ring: new THREE.TorusGeometry(0.18, 0.008, 4, 40) };
@@ -359,15 +359,4 @@ export function buildOrb() {
   const ring = new THREE.Mesh(GEO.orb.ring, glow(0xffd27a, 0.9));
   g.add(core, shell, ring);
   return { group: g, core, shell, ring };
-}
-
-export function buildStartCrystal() {
-  const g = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffe6b0, metalness: 0.3, roughness: 0.15, emissive: 0xffb84a, emissiveIntensity: 0.6, flatShading: true });
-  const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.15, 0), mat);
-  gem.scale.set(1, 1.5, 1);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.009, 4, 48), glow(0xffd27a, 0.9));
-  const ring2 = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.006, 4, 40), glow(0xffd27a, 0.6));
-  g.add(gem, ring, ring2);
-  return { group: g, gem, mat, ring, ring2 };
 }

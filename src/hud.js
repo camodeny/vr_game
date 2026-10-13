@@ -32,18 +32,18 @@ export class WristDisplay {
     this.last = 0;
   }
   draw(st, now) {
-    const key = [Math.round(st.hp), Math.round(st.cad), st.el, st.score, st.wave, st.reload ? Math.round(st.reload * 20) : 0].join('|');
+    const key = [Math.round(st.hp), Math.round(st.cad), st.el, st.score, st.label, st.hold ? st.hold.label + Math.round(st.hold.k * 20) : 0].join('|');
     if (key === this.key || now - this.last < 80) return;
     this.key = key; this.last = now;
     const x = this.p.ctx, W = 512, H = 300;
     x.clearRect(0, 0, W, H);
     x.fillStyle = 'rgba(9,11,22,0.9)'; x.strokeStyle = 'rgba(255,210,122,0.8)'; x.lineWidth = 4;
     x.beginPath(); x.roundRect(4, 4, W - 8, H - 8, 26); x.fill(); x.stroke();
-    if (st.reload) {
+    if (st.hold) {
       x.fillStyle = '#ffd27a'; x.font = `800 54px ${FONT}`; x.textAlign = 'center'; x.textBaseline = 'middle';
-      x.fillText('RELOADING', W / 2, 110);
+      x.fillText(st.hold.label, W / 2, 110, W - 40);
       x.fillStyle = 'rgba(255,255,255,.15)'; x.fillRect(60, 170, W - 120, 30);
-      x.fillStyle = '#ffd27a'; x.fillRect(60, 170, (W - 120) * Math.min(1, st.reload), 30);
+      x.fillStyle = '#ffd27a'; x.fillRect(60, 170, (W - 120) * Math.min(1, st.hold.k), 30);
       this.p.tex.needsUpdate = true;
       return;
     }
@@ -76,7 +76,7 @@ export class WristDisplay {
     x.textAlign = 'right'; x.fillStyle = '#fff'; x.font = `800 50px ${FONT}`;
     x.fillText(st.score.toLocaleString(), W - 34, 208);
     x.fillStyle = 'rgba(255,210,122,0.9)'; x.font = `700 26px ${FONT}`;
-    x.fillText(st.wave ? `WAVE ${st.wave}` : 'CADENCE', W - 34, 252);
+    x.fillText(st.label, W - 34, 252);
     this.p.tex.needsUpdate = true;
   }
 }
@@ -166,6 +166,11 @@ export class Board {
     scene.add(this.p.mesh);
   }
   set visible(v) { this.p.mesh.visible = v; }
+  get visible() { return this.p.mesh.visible; }
+  setPose(pos, look, scale = 1) {
+    const m = this.p.mesh;
+    m.position.copy(pos); m.lookAt(look); m.scale.setScalar(scale);
+  }
   faceToward(head) {
     const m = this.p.mesh;
     m.position.set(head.x + this._fwd.x * 3.7, 2.25, head.z + this._fwd.z * 3.7);
@@ -185,12 +190,12 @@ export class Board {
     x.textAlign = 'center'; x.textBaseline = 'middle';
     return x;
   }
-  title(best, vr) {
+  hub(best, vr, names) {
     const x = this._frame(), W = 1024;
-    x.font = `900 120px ${FONT}`; x.fillStyle = '#ffd27a'; x.shadowColor = '#ff9a3c'; x.shadowBlur = 30;
-    x.fillText('CADENCE', W / 2, 108); x.shadowBlur = 0;
-    x.font = `600 34px ${FONT}`; x.fillStyle = '#c9d2ff';
-    x.fillText('Every strike lands on the beat.', W / 2, 190);
+    x.font = `900 112px ${FONT}`; x.fillStyle = '#ffd27a'; x.shadowColor = '#ff9a3c'; x.shadowBlur = 30;
+    x.fillText('CADENCE', W / 2, 96); x.shadowBlur = 0;
+    x.font = `700 32px ${FONT}`; x.fillStyle = '#c9d2ff';
+    x.fillText('TRAINING HALL — slash a crystal to choose', W / 2, 172);
     const rows = vr ? [
       ['SWORD', 'Slash on the beat · big swing at range fires a beam'],
       ['A / B', 'Change element — mix two on one enemy for a reaction'],
@@ -202,17 +207,72 @@ export class Board {
       ['1 2 3 / E', 'Change element — mix two on one enemy for a reaction'],
       ['Q / F', 'Q hold: grab, release to throw · F: force push'],
       ['DEFEND', 'Red = incoming. Block with your blade, or PERFECT hit to interrupt'],
-      ['WASD', 'Move · ← → or right-drag to turn'],
+      ['WASD', 'Move · ← → or right-drag to turn · buttons at top-left pick a mode'],
     ];
     rows.forEach(([k, v], i) => {
-      const y = 280 + i * 64;
-      x.textAlign = 'right'; x.font = `800 28px ${FONT}`; x.fillStyle = '#ffd27a'; x.fillText(k, 270, y);
-      x.textAlign = 'left'; x.font = `500 28px ${FONT}`; x.fillStyle = '#e6e9ff'; x.fillText(v, 300, y, 690);
+      const y = 250 + i * 56;
+      x.textAlign = 'right'; x.font = `800 26px ${FONT}`; x.fillStyle = '#ffd27a'; x.fillText(k, 270, y);
+      x.textAlign = 'left'; x.font = `500 26px ${FONT}`; x.fillStyle = '#e6e9ff'; x.fillText(v, 300, y, 690);
     });
-    x.textAlign = 'center'; x.font = `800 34px ${FONT}`; x.fillStyle = '#fff';
-    x.fillText('Slash the crystal on the beat to begin', W / 2, 620);
-    if (best) { x.font = `600 24px ${FONT}`; x.fillStyle = 'rgba(255,210,122,.8)'; x.fillText(`best ${best.toLocaleString()}`, W / 2, 664); }
+    x.textAlign = 'center'; x.font = `800 30px ${FONT}`; x.fillStyle = '#fff';
+    x.fillText('PLAY = the full game · stations = one mechanic each', W / 2, 560);
+    x.font = `600 25px ${FONT}`; x.fillStyle = '#9aa3c7';
+    x.fillText(`In a station: ${names[1]} toggles beat judging · hold ${names[0]} to come back here`, W / 2, 606, W - 60);
+    if (best) { x.font = `600 24px ${FONT}`; x.fillStyle = 'rgba(255,210,122,.8)'; x.fillText(`best ${best.toLocaleString()}`, W / 2, 656); }
     this.p.tex.needsUpdate = true;
+  }
+  // Live panel for a sandbox station.
+  station(d) {
+    const x = this._frame(), W = 1024;
+    x.font = `900 80px ${FONT}`; x.fillStyle = d.css; x.shadowColor = d.css; x.shadowBlur = 22;
+    x.fillText(d.name, W / 2, 70); x.shadowBlur = 0;
+    x.font = `500 26px ${FONT}`; x.fillStyle = '#dfe4ff';
+    d.lines.forEach((ln, i) => x.fillText(ln, W / 2, 140 + i * 36, W - 60));
+    if (d.last) {
+      x.font = `900 52px ${FONT}`; x.fillStyle = d.last.color || '#fff';
+      x.fillText(d.last.text, W / 2, 318, W - 60);
+      if (d.last.sub) { x.font = `600 26px ${FONT}`; x.fillStyle = '#9aa3c7'; x.fillText(d.last.sub, W / 2, 360, W - 60); }
+    }
+    if (d.timing) this._timing(x, d.timing, 400);
+    if (d.bars) d.bars.forEach((b, i) => this._bar(x, b, 396 + i * 46));
+    (d.stats || []).forEach(([label, value], i) => {
+      const row = Math.floor(i / 3), cols = Math.min(3, d.stats.length - row * 3);
+      const cx = W / 2 + ((i % 3) - (cols - 1) / 2) * 290, cy = 512 + row * 76;
+      x.font = `900 42px ${FONT}`; x.fillStyle = '#fff'; x.fillText(`${value}`, cx, cy);
+      x.font = `700 19px ${FONT}`; x.fillStyle = '#ffd27a'; x.fillText(label, cx, cy + 32);
+    });
+    x.font = `700 23px ${FONT}`; x.fillStyle = '#c9d2ff';
+    x.fillText(d.footer, W / 2, 666, W - 50);
+    this.p.tex.needsUpdate = true;
+  }
+  // Early/late chart: ±200 ms, PERFECT and GOOD zones, recent hits and their mean.
+  _timing(x, tm, y) {
+    const L = 120, R = 904, ms = (v) => L + ((v + 200) / 400) * (R - L), h = 54;
+    x.fillStyle = 'rgba(255,255,255,0.06)'; x.fillRect(L, y, R - L, h);
+    x.fillStyle = 'rgba(223,230,255,0.13)'; x.fillRect(ms(-tm.good), y, ms(tm.good) - ms(-tm.good), h);
+    x.fillStyle = 'rgba(255,210,122,0.22)'; x.fillRect(ms(-tm.perfect), y, ms(tm.perfect) - ms(-tm.perfect), h);
+    x.fillStyle = 'rgba(255,255,255,0.6)'; x.fillRect(ms(0) - 1, y - 6, 2, h + 12);
+    tm.hits.forEach((v, i) => {
+      const a = 0.25 + 0.75 * ((i + 1) / tm.hits.length);
+      x.fillStyle = Math.abs(v) <= tm.perfect ? `rgba(255,210,122,${a})` : Math.abs(v) <= tm.good ? `rgba(223,230,255,${a})` : `rgba(244,63,94,${a})`;
+      x.fillRect(ms(Math.max(-198, Math.min(198, v))) - 3, y + 6, 6, h - 12);
+    });
+    if (tm.hits.length) {
+      const m = ms(Math.max(-198, Math.min(198, tm.mean)));
+      x.fillStyle = '#4ade80'; x.beginPath(); x.moveTo(m, y + h + 4); x.lineTo(m - 10, y + h + 20); x.lineTo(m + 10, y + h + 20); x.fill();
+    }
+    x.font = `700 18px ${FONT}`; x.fillStyle = '#9aa3c7';
+    x.textAlign = 'left'; x.fillText('EARLY', L, y - 14); x.textAlign = 'right'; x.fillText('LATE', R, y - 14); x.textAlign = 'center';
+  }
+  // Labelled meter with a threshold mark.
+  _bar(x, b, y) {
+    const L = 300, R = 860, k = Math.max(0, Math.min(1, b.value / b.max)), mk = b.mark / b.max;
+    x.textAlign = 'right'; x.font = `700 22px ${FONT}`; x.fillStyle = '#c9d2ff'; x.fillText(b.label, L - 18, y + 14);
+    x.fillStyle = 'rgba(255,255,255,0.1)'; x.fillRect(L, y, R - L, 26);
+    x.fillStyle = b.value >= b.mark ? '#4ade80' : '#f59e0b'; x.fillRect(L, y, (R - L) * k, 26);
+    x.fillStyle = '#fff'; x.fillRect(L + (R - L) * mk - 2, y - 6, 4, 38);
+    x.textAlign = 'left'; x.font = `800 22px ${FONT}`; x.fillStyle = '#fff'; x.fillText(`${b.value.toFixed(1)} ${b.unit}`, R + 14, y + 14);
+    x.textAlign = 'center';
   }
   gameOver(s) {
     const x = this._frame(), W = 1024;
@@ -228,7 +288,7 @@ export class Board {
       x.font = `700 22px ${FONT}`; x.fillStyle = '#ffd27a'; x.fillText(k, cx, cy + 42);
     });
     x.font = `800 32px ${FONT}`; x.fillStyle = '#e6e9ff';
-    x.fillText('Slash the crystal to go again', W / 2, 640);
+    x.fillText('Slash PLAY to go again — or pick a station to practise', W / 2, 640);
     this.p.tex.needsUpdate = true;
   }
 }
@@ -259,6 +319,39 @@ export class Vignette {
   }
 }
 
+// ===================================================================== fade (for teleports)
+export class Fade {
+  constructor(camera) {
+    this.mat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.6), this.mat);
+    this.mesh.position.z = -0.1; this.mesh.renderOrder = 200; this.mesh.frustumCulled = false; this.mesh.visible = false;
+    camera.add(this.mesh);
+    this.phase = 'idle'; this.t = 0; this.cb = null;
+  }
+  get busy() { return this.phase !== 'idle'; }
+  // Fade to black, run `cb`, fade back in.
+  run(cb) {
+    if (this.busy) return false;
+    this.phase = 'out'; this.t = 0; this.cb = cb; this.mesh.visible = true;
+    return true;
+  }
+  update(dt) {
+    if (this.phase === 'idle') return;
+    this.t += dt;
+    if (this.phase === 'out') {
+      this.mat.opacity = Math.min(1, this.t / 0.14);
+      if (this.t >= 0.16) {
+        const cb = this.cb;
+        this.cb = null; this.phase = 'in'; this.t = 0;
+        try { cb?.(); } catch (e) { console.error(e); }
+      }
+    } else {
+      this.mat.opacity = Math.max(0, 1 - this.t / 0.3);
+      if (this.t >= 0.3) { this.phase = 'idle'; this.mesh.visible = false; }
+    }
+  }
+}
+
 // ===================================================================== desktop DOM HUD
 export class DomHud {
   constructor() {
@@ -271,7 +364,7 @@ export class DomHud {
     this.key = '';
   }
   update(st) {
-    const key = [Math.round(st.hp), Math.round(st.cad), st.el, st.score, st.combo, st.label].join('|');
+    const key = [Math.round(st.hp), Math.round(st.cad), st.el, st.score, st.combo, st.tierLabel].join('|');
     if (key === this.key) return;
     this.key = key;
     const hpK = Math.max(0, st.hp / st.hpMax);
@@ -284,6 +377,6 @@ export class DomHud {
     }).join('');
     this.elem.textContent = el.name; this.elem.style.color = el.css;
     this.score.textContent = st.score.toLocaleString();
-    this.combo.textContent = st.combo > 1 ? `${st.combo} ${st.label}` : '';
+    this.combo.textContent = st.combo > 1 ? `${st.combo} ${st.tierLabel}` : '';
   }
 }

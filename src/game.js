@@ -12,7 +12,6 @@ import {
 } from './config.js';
 import { Enemy, Orb, REACH } from './enemies.js';
 import { makeCrescent, Trail } from './fx.js';
-import { buildStartCrystal } from './models.js';
 
 const V = THREE.Vector3;
 const clamp = THREE.MathUtils.clamp;
@@ -53,18 +52,16 @@ export class Game {
   constructor(ctx) {
     Object.assign(this, ctx); // scene, audio, fx, player, wrist, comboHud, board, vignette, domHud
     this.t = 0; this.beat = -1; this.pulse = 0; this.phase = 0;
-    this.state = 'title';
+    this.state = 'hub';              // hub | play | over | sandbox
+    this.sandbox = null;             // set by main; owns the hub and training stations
+    this.freeTiming = false;         // sandbox: every action counts as PERFECT
+    this.inputOffset = +(localStorage.getItem('cadence.inputOffset') ?? INPUT_OFFSET) || 0;
     this.enemies = []; this.orbs = []; this.falling = [];
     this.best = +(localStorage.getItem('cadence.best') || 0);
     this.el = 0;
     this.seen = new Set();
     this.runeFlash = 0; this.swapFlash = 0;
     this._resetRun();
-
-    this.crystal = buildStartCrystal();
-    this.scene.add(this.crystal.group);
-    this.crystalAt = new V(0, 1.2, -0.85);
-    this.crystalReady = 0; this.crystalTries = 0; this.crystalInside = false;
 
     this.aimRing = new THREE.Mesh(new THREE.RingGeometry(0.46, 0.52, 48), new THREE.MeshBasicMaterial({ color: COLORS.force, transparent: true, opacity: 0.8, depthWrite: false, toneMapped: false, side: THREE.DoubleSide }));
     this.aimRing.rotation.x = -Math.PI / 2; this.aimRing.visible = false;
@@ -73,9 +70,10 @@ export class Game {
     this.aura = new THREE.PointLight(0xff8a2a, 2, 3.5, 2);
     this.player.sword.mid.add(this.aura);
     this.trail = new Trail(this.scene);
-    this.board.title(this.best, false);
-    this.placed = false;
   }
+
+  get live() { return this.state === 'play' || this.state === 'sandbox'; }
+  emit(type, data = {}) { this.sandbox?.event(type, data); }
 
   _resetRun() {
     Object.assign(this, {
@@ -86,23 +84,15 @@ export class Game {
     });
   }
 
-  // Place the title board and start crystal in front of wherever the player is looking.
-  placeFront() {
-    const P = this.player;
-    this.board.place(P.head, P.flatFwd);
-    this.crystalAt.set(P.head.x + P.flatFwd.x * 0.8, clamp(P.head.y - 0.38, 0.85, 1.5), P.head.z + P.flatFwd.z * 0.8);
-    this.placed = true;
-  }
-  onSessionStart() {
-    this.placed = false;
-    this.placeAt = performance.now() + 500; // wait for a real headset pose
-    if (this.state === 'title') this.board.title(this.best, this.player.presenting);
-  }
-
   // ------------------------------------------------------------------ timing
   judge() {
-    const t = this.t - INPUT_OFFSET, k = Math.round(t / BEAT), off = t - k * BEAT, a = Math.abs(off);
+    const t = this.t - this.inputOffset, k = Math.round(t / BEAT), off = t - k * BEAT, a = Math.abs(off);
+    if (this.freeTiming) return { beat: k, off, grade: 'perfect' };
     return { beat: k, off, grade: a <= PERFECT ? 'perfect' : a <= GOOD ? 'good' : 'off' };
+  }
+  setInputOffset(v) {
+    this.inputOffset = Math.max(-0.2, Math.min(0.2, v));
+    localStorage.setItem('cadence.inputOffset', String(this.inputOffset));
   }
   tierInfo() { return TIERS[this.tierIdx]; }
   _action(grade) {
@@ -120,7 +110,7 @@ export class Game {
   _retier() {
     let i = 0;
     for (let k = 0; k < TIERS.length; k++) if (this.combo >= TIERS[k].at) i = k;
-    if (i > this.tierIdx && this.state === 'play') this.comboHud.message(`${TIERS[i].label} · ${TIER_NAMES[i + 1] || TIER_NAMES[i]}`, '#ffd27a', 1.6);
+    if (i > this.tierIdx && this.live) this.comboHud.message(`${TIERS[i].label} · ${TIER_NAMES[i + 1] || TIER_NAMES[i]}`, '#ffd27a', 1.6);
     this.tierIdx = i;
   }
   _gain(n) { this.cad = Math.min(CAD_MAX, this.cad + n); }
@@ -150,20 +140,15 @@ export class Game {
     this.phase = t / BEAT - b;
     this.pulse = Math.exp(-this.phase * 5);
     const P = this.player;
-    if (!this.placed && now >= (this.placeAt || 0) && P.head.lengthSq() > 0) this.placeFront();
 
     this._elements(P.input);
-    if (this.state === 'play') {
-      this.crystal.group.visible = false;
+    if (this.live) {
       this._melee(now);
       this._beamCheck(now);
       this._force(dt, t);
-    } else {
-      this._crystal(dt, t, now);
-      if (P.input.grabUp && this.held) this._release(true);
-    }
+    } else if (P.input.grabUp && this.held) this._release(true);
     for (const e of [...this.enemies]) e.update(dt, t, P.head, this.enemies);
-    if (this.state === 'play') this._trackGuards();
+    if (this.live) this._trackGuards();
     for (let i = this.falling.length - 1; i >= 0; i--) {
       const e = this.falling[i]; e.update(dt, t, P.head, this.enemies);
       if (e.root.position.y < -12) { this.scene.remove(e.root); this.falling.splice(i, 1); }
@@ -172,15 +157,17 @@ export class Game {
     this._updateOrbs(dt, t);
     this._updateBeams(dt);
     this._statusFx(dt);
+    this.sandbox?.update(dt, t, now);
     this._swordFx(dt, t);
     this._hud(dt, now);
   }
 
   _onBeat(b) {
-    if (this.state !== 'play') return;
+    if (!this.live) return;
     const down = b % 4 === 0;
     this.player.pulse('force', down ? 0.22 : 0.1, 14);   // a metronome you can feel
-    this._waveBeat(b);
+    if (this.state === 'play') this._waveBeat(b);
+    else this.sandbox?.onBeat(b);
     for (const e of [...this.enemies]) e.onBeat(b);
     for (const e of [...this.enemies]) {
       if (e.alive && e.status.el === 'fire' && e.status.until > b) {
@@ -245,13 +232,28 @@ export class Game {
       pos.set(x, 0, z);
       if (this.enemies.every((e) => e.root.position.distanceTo(pos) > 1.5) && Math.hypot(x - P.head.x, z - P.head.z) > 2.2) break;
     }
-    const e = new Enemy(type, this, pos, this.waveScale);
+    this.spawnAt(type, pos, b);
+    if (type === 'caster') this.firstSeen('caster');
+  }
+  spawnAt(type, pos, b, cfg = {}) {
+    const P = this.player;
+    const e = new Enemy(type, this, pos, this.waveScale, cfg);
     e.root.rotation.y = Math.atan2(P.head.x - pos.x, P.head.z - pos.z);
     this.scene.add(e.root);
     this.enemies.push(e);
     this.audio.spawn(_a.copy(pos).setY(1.3), this.audio.now, this.audio.ctxTimeOf((b + 2) * BEAT));
     this.fx.pillar(pos, type === 'grunt' ? COLORS.danger : 0xb08fd8);
-    if (type === 'caster') this.firstSeen('caster');
+    return e;
+  }
+  // Remove every enemy, orb and held thing without fanfare (mode changes).
+  clearField() {
+    this._dropHold();
+    for (const e of [...this.enemies]) this._kill(e, UP, true);
+    for (const o of [...this.orbs]) o.remove();
+    this.orbs.length = 0;
+    for (const e of this.falling) this.scene.remove(e.root);
+    this.falling.length = 0;
+    for (const b of [...this.fx.beams]) this.fx.removeBeam(b);
   }
   requestAttack(e) {
     if (this.state !== 'play' || this.lastAttackBeat === this.beat) return false;
@@ -287,6 +289,7 @@ export class Game {
       this.lastMeleeT = now;
       if (slash) this._slash(e, hit);
       else {
+        this.emit('tap', { speed: B.speed, arc: P.arc(160) });
         e.damage(DMG.tap, null, 0.2);
         this.audio.tap(hit);
         this.fx.particles.burst(hit, 4, 0xaab4cc, { speed: 1.2, size: 0.025, life: 0.25 });
@@ -300,8 +303,10 @@ export class Game {
     const dmg = DMG.slash * GRADE_MULT[j.grade] * tier.dmg * speedK * (e.airborne ? 1.25 : 1);
     const dir = new V().copy(B.vel).normalize();
     this._action(j.grade);
+    this.emit('slash', { grade: j.grade, off: j.off, dmg, speed: B.speed, enemy: e, windup: e.windingUp });
     if (j.grade !== 'off') this._gain(GAIN[j.grade]);
     if (j.grade === 'perfect' && e.windingUp) {
+      this.emit('interrupt');
       e.interrupt(1);
       this.fx.text.spawn('INTERRUPT', _a.copy(pos).add(new V(0, 0.36, 0)), { color: '#4ade80', size: 0.07 });
     }
@@ -329,16 +334,17 @@ export class Game {
     if (!this.beamArmed || B.speed < SWING.beamSpeed) return;
     if (now - this.lastMeleeT < 250) { this.beamArmed = false; return; }
     if (P.arc(200) < SWING.beamArc) return;
-    for (const e of this.enemies) if (e.targetable && e.center.distanceTo(B.tip) < 0.9) return; // about to connect in melee
+    for (const e of this.enemies) if (e.targetable && e.center.distanceTo(B.tip) < 0.9) { this.emit('beam', { kind: 'close' }); return; } // about to connect in melee
     this.beamArmed = false;
     const j = this.judge();
     if (j.grade === 'off') {
+      this.emit('beam', { kind: 'dud', off: j.off });
       this.audio.dud(B.tip);
       this.fx.particles.burst(B.tip, 8, 0x8a90a8, { speed: 1.5, size: 0.03, life: 0.3 });
       return;
     }
-    if (now < this.beamCd) return;
-    if (this.cad < COST.beam) { this._denied(); this.fx.text.spawn('need ⚡', B.tip, { color: '#f43f5e', size: 0.05 }); return; }
+    if (now < this.beamCd) { this.emit('beam', { kind: 'cooldown' }); return; }
+    if (this.cad < COST.beam) { this.emit('beam', { kind: 'denied' }); this._denied(); this.fx.text.spawn('need ⚡', B.tip, { color: '#f43f5e', size: 0.05 }); return; }
     this.cad -= COST.beam;
     this.beamCd = now + BEAT * 900;
     this._fireBeam(j);
@@ -372,6 +378,7 @@ export class Game {
     });
     this.fx.addBeam(obj);
     this._action(j.grade);
+    this.emit('beam', { kind: 'fired', grade: j.grade, off: j.off });
     this.audio.beam(B.mid, el.id);
     this.player.pulse('sword', 0.9, 90);
     this.fx.particles.burst(B.mid, 22, el.color, { dir, spread: 0.6, speed: 5, size: 0.04, life: 0.35 });
@@ -403,6 +410,7 @@ export class Game {
   }
   _beamHit(e, obj) {
     const u = obj.userData, pos = e.center.clone(), dir = u.vel.clone().normalize(), el = ELEMENTS.find((x) => x.id === u.el);
+    this.emit('beamHit', { dmg: u.dmg });
     e.damage(u.dmg, dir, 1.3);
     e.knock(_a.copy(dir).setY(0).normalize().multiplyScalar(2.4));
     if (u.grade === 'perfect' && e.windingUp) e.interrupt(1);
@@ -437,6 +445,7 @@ export class Game {
     if (!e.alive) return;
     const cur = e.status.until > this.beat ? e.status.el : null;
     if (cur && cur !== el) { this._react(e, cur, el, dmg, pos); return; }
+    this.emit('status', { el });
     if (!cur && !this.seen.has('element') && this.kills >= 1) this.firstSeen('element');
     if (el === 'fire') e.status = { el, until: this.beat + 4 };
     else if (el === 'ice') {
@@ -458,6 +467,7 @@ export class Game {
   _react(e, a, b, dmg, pos) {
     const R = REACTIONS[[a, b].sort().join('+')];
     const tier = this.tierInfo();
+    this.emit('reaction', { name: R.name, css: R.css, from: a, to: b });
     e.status = { el: null, until: 0 };
     this.reactions++;
     this._gain(GAIN.reaction);
@@ -556,11 +566,12 @@ export class Game {
   }
   _grab() {
     const e = this.aimTarget, P = this.player;
-    if (!e) { this.audio.dud(P.hand.pos); return; }
+    if (!e) { this.audio.dud(P.hand.pos); this.emit('grab', { kind: 'miss' }); return; }
     if (this.cad < COST.grab) { this._denied(); return; }
     this.cad -= COST.grab;
     const j = this.judge();
     this._action(j.grade);
+    this.emit('grab', { kind: j.grade === 'off' ? 'yank' : 'hold', grade: j.grade, off: j.off });
     this.audio.pull(e.center);
     P.pulse('force', 0.7, 80);
     this.fx.ring(P.hand.pos, P.aim.dir, COLORS.force, { size: 0.7, life: 0.3 });
@@ -597,10 +608,11 @@ export class Game {
       const dir = P.vr ? hv.clone().normalize().lerp(P.aim.dir, 0.3).normalize() : P.aim.dir.clone();
       const spd = P.vr ? clamp(sp * 3.4, 7, 16) : 12;
       e.throwWith(dir.multiplyScalar(spd).add(new V(0, 1.4, 0)), j.grade === 'perfect' ? 1.6 : j.grade === 'good' ? 1.2 : 0.8);
+      this.emit('throw', { grade: j.grade, handSpeed: sp, speed: spd, vr: P.vr });
       this.audio.throwWhoosh(e.center);
       P.pulse('force', 0.8, 60);
       this.fx.text.spawn(j.grade === 'off' ? 'THROW · OFF BEAT' : j.grade === 'perfect' ? 'PERFECT THROW' : 'THROW', _a.copy(e.center).add(new V(0, 0.5, 0)), { color: j.grade === 'off' ? '#8a90a8' : '#ffe2a0', size: 0.055 });
-    } else e.drop();
+    } else { e.drop(); this.emit('drop', { handSpeed: sp, timeout }); }
   }
   _push() {
     const P = this.player, A = P.aim;
@@ -620,11 +632,13 @@ export class Game {
       e.throwWith(dir.clone().multiplyScalar(16).add(new V(0, 1.5, 0)), strong ? 1.6 : 1);
       this.fx.text.spawn('LAUNCH', _a.copy(e.center).add(new V(0, 0.5, 0)), { color: '#ffe2a0', size: 0.06 });
     }
+    let hits = 0;
     for (const e of [...this.enemies]) {
       if (!e.targetable || e.airborne) continue;
       _b.subVectors(e.center, A.origin);
       const d = _b.length();
       if (d > 5.5 || _b.divideScalar(d).dot(dir) < Math.cos(0.7)) continue;
+      hits++;
       const fall = 1 - 0.45 * (d / 5.5);
       _c.copy(dir).setY(0).normalize();
       e.damage(DMG.push * (strong ? 1.5 : 1), dir, 1.6);
@@ -632,6 +646,7 @@ export class Game {
       else { e.knock(_c.multiplyScalar(4 * fall)); e.stagger(1); }
       if (e.hp <= 0) this._kill(e, dir);
     }
+    this.emit('push', { grade: j.grade, hits });
     for (const o of this.orbs) {
       if (!o.alive || o.deflected) continue;
       _b.subVectors(o.pos, A.origin);
@@ -656,6 +671,7 @@ export class Game {
         e.vel.multiplyScalar(-0.25);
         this.fx.particles.burst(pos, 24, COLORS.force, { speed: 4, size: 0.045, life: 0.45, grav: -5 });
         this.fx.flash(pos, COLORS.force, 0.5);
+        this.emit('impact', { dmg });
         this.fx.text.spawn(`IMPACT ${Math.round(dmg)}`, _c.copy(pos).add(new V(0, 0.4, 0)), { color: '#ffe2a0', size: 0.07 });
         this.audio.impact(pos, 1.2);
         this.player.pulse('force', 0.8, 80);
@@ -671,6 +687,7 @@ export class Game {
     const dmg = DMG.slam * e.throwMult * clamp(impact / 6, 0.6, 1.5) * this.tierInfo().dmg;
     const pos = new V(e.root.position.x, 0.05, e.root.position.z);
     e.damage(dmg, null, 2);
+    this.emit('slam', { dmg });
     this.fx.ring(pos, UP, COLORS.force, { size: 2.6, life: 0.45 });
     this.fx.particles.burst(_a.copy(pos).setY(0.2), 18, 0xb8b0a0, { speed: 2.5, up: 1, size: 0.05, life: 0.5, grav: -6 });
     this.fx.text.spawn(`SLAM ${Math.round(dmg)}`, _a.copy(pos).setY(1.5), { color: '#ffe2a0', size: 0.07 });
@@ -684,7 +701,8 @@ export class Game {
     this.falling.push(e);
     if (this.held === e) this._dropHold();
     e.alive = false;
-    if (this.state !== 'play') return;
+    if (!this.live) return;
+    this.emit('ringout');
     this.kills++;
     this.score += 250 * this.tierInfo().mult;
     this._gain(GAIN.kill + 4);
@@ -717,7 +735,7 @@ export class Game {
     }
   }
   resolveStrike(e) {
-    if (this.state !== 'play') return;
+    if (!this.live) return;
     const P = this.player, h = P.head, c = e.center;
     const dist = Math.hypot(h.x - c.x, h.z - c.z);
     const from = new V(), strikePt = new V();
@@ -726,6 +744,7 @@ export class Game {
     if (dist < REACH + 0.35 && G.d < 0.2) {
       const active = G.speed > 1.5, contact = G.at.clone();
       const tier = this.tierInfo();
+      this.emit('strike', { result: active ? 'parry' : 'block' });
       if (active) {
         this.parries++;
         this._action('perfect');
@@ -746,14 +765,16 @@ export class Game {
       return;
     }
     if (dist > REACH) {
+      this.emit('strike', { result: 'dodge' });
       this.fx.text.spawn('DODGED', strikePt.clone().add(new V(0, 0.3, 0)), { color: '#8a90a8', size: 0.05 });
       this.score += 10;
       return;
     }
+    this.emit('strike', { result: 'hit' });
     this._hurt(14 * (1 + 0.06 * (this.wave - 1)));
   }
   fireOrb(caster, b) {
-    if (this.state !== 'play') return;
+    if (!this.live) return;
     _a.subVectors(this.player.head, caster.center).setY(0).normalize();
     const from = caster.center.clone().addScaledVector(_a, 0.4);
     this.orbs.push(new Orb(this, caster, from, this.player.head, b));
@@ -775,12 +796,14 @@ export class Game {
           const target = j.grade === 'off' ? null : o.caster.alive ? o.caster : this.enemies.find((e) => e.targetable) || null;
           o.deflect(target, j.grade, j.grade === 'perfect' ? 16 : 12);
           if (j.grade !== 'off') { this._action(j.grade); this._gain(GAIN.deflect); }
+          this.emit('deflect', { grade: j.grade, off: j.off });
           this.audio.deflect(o.pos, j.grade);
           P.pulse('sword', 0.8, 60);
           this.fx.particles.burst(o.pos, 16, j.grade === 'perfect' ? COLORS.gold : 0xffffff, { speed: 3.5, size: 0.035, life: 0.35 });
           const [label, css] = GRADE_STYLE[j.grade];
           this.fx.text.spawn(j.grade === 'off' ? 'DEFLECT · OFF' : `${label} DEFLECT`, _a.copy(o.pos).add(new V(0, 0.2, 0)), { color: css, size: 0.055 });
-        } else if (o.pos.distanceTo(P.head) < 0.3) {
+        } else if (o.pos.distanceTo(_c.set(P.head.x, P.head.y - 0.25, P.head.z)) < 0.35) {
+          this.emit('orbHit');
           this._hurt(11 * (1 + 0.06 * (this.wave - 1)));
           this.fx.particles.burst(o.pos, 18, 0xff4d6d, { speed: 2.5, size: 0.04, life: 0.35 });
           o.remove();
@@ -808,8 +831,14 @@ export class Game {
   }
   _hurt(dmg) {
     const now = performance.now();
-    if (now < this.invuln || this.state !== 'play') return;
+    if (now < this.invuln || !this.live) return;
     this.invuln = now + 450;
+    if (this.state === 'sandbox') { // training: feel the hit, lose nothing
+      this.vignette.flash(0.6); this.audio.playerHit();
+      this.player.pulse('sword', 0.8, 120); this.player.pulse('force', 0.8, 120);
+      this.fx.text.spawn('HIT', this.player.head.clone().addScaledVector(this.player.flatFwd, 0.9).add(new V(0, -0.25, 0)), { color: '#f43f5e', size: 0.07 });
+      return;
+    }
     this.hp -= dmg;
     this._breakCombo();
     this.vignette.flash(1);
@@ -835,6 +864,7 @@ export class Game {
     setTimeout(() => Object.values(e.m.mats).forEach((m) => m.dispose()), 2500);
     if (silent) return;
     this.audio.enemyDie(c, this.audio.hitNote(this.combo));
+    this.emit('kill', { enemy: e });
     const tier = this.tierInfo();
     this.kills++;
     this.score += 100 * tier.mult;
@@ -854,46 +884,10 @@ export class Game {
       score: this.score, best: this.best, newBest, wave: this.wave, kills: this.kills, maxCombo: this.maxCombo,
       perfectPct: this.judged ? Math.round((100 * this.perfects) / this.judged) : 0, reactions: this.reactions, parries: this.parries,
     });
-    this.placeFront();
     this.board.visible = true;
     this.combo = 0; this._retier();
     this.audio.gameOver();
-    this.crystalReady = performance.now() + 2500;
-    this.crystalTries = 0;
-  }
-
-  _crystal(dt, t, now) {
-    const C = this.crystal, show = now > this.crystalReady;
-    C.group.visible = show;
-    if (!show) return;
-    const P = this.player;
-    C.group.position.set(this.crystalAt.x, this.crystalAt.y + Math.sin(t * 1.6) * 0.03, this.crystalAt.z);
-    C.group.lookAt(P.head);
-    C.gem.rotation.y += dt * 0.9;
-    C.mat.emissiveIntensity = 0.5 + this.pulse * 2;
-    C.ring.scale.setScalar(1 + (1 - this.phase) * 0.9);
-    C.ring.material.opacity = 0.2 + this.phase * 0.8;
-    C.ring2.rotation.z = t * 0.7;
-    const B = P.blade;
-    if (!B.init) return;
-    const d = pointSeg(C.group.position, B.base, B.tip, _a);
-    const inside = d < 0.2;
-    if (inside && !this.crystalInside && B.speed > SWING.slashSpeed) {
-      const j = this.judge();
-      this.audio.slash(C.group.position, j.grade, 74, 'fire');
-      if (j.grade !== 'off' || ++this.crystalTries >= 3) {
-        this.fx.particles.burst(C.group.position, 50, COLORS.gold, { speed: 4, size: 0.05, life: 0.8, grav: -3 });
-        this.fx.flash(C.group.position, COLORS.gold, 0.8, 0.3);
-        this.fx.text.spawn(j.grade === 'off' ? 'CLOSE ENOUGH' : GRADE_STYLE[j.grade][0], _a.copy(C.group.position).add(new V(0, 0.3, 0)), { color: '#ffd27a', size: 0.08 });
-        C.group.visible = false;
-        this.crystalReady = Infinity;
-        this._startRun();
-      } else {
-        this.fx.text.spawn('OFF BEAT', _a.copy(C.group.position).add(new V(0, 0.3, 0)), { color: '#8a90a8', size: 0.06 });
-        this.comboHud.setHint('Wait for the pulse — slash right on the beat', 3);
-      }
-    }
-    this.crystalInside = inside;
+    this.sandbox?.onGameOver();
   }
 
   // ------------------------------------------------------------------ presentation
@@ -924,7 +918,7 @@ export class Game {
     const g = this.player.offGlove.gemMat.color.setHex(COLORS.force);
     g.multiplyScalar(this.held ? 2 + Math.sin(t * 30) * 0.5 : this.aimTarget ? 1.4 + this.pulse : this.cad >= COST.grab ? 0.8 : 0.25);
     const tgt = this.aimTarget;
-    this.aimRing.visible = !!tgt && this.state === 'play';
+    this.aimRing.visible = !!tgt && this.live;
     if (tgt) {
       this.aimRing.position.set(tgt.root.position.x, 0.03, tgt.root.position.z);
       this.aimRing.scale.setScalar(1 + this.pulse * 0.15);
@@ -934,16 +928,17 @@ export class Game {
 
   _hud(dt, now) {
     const P = this.player, tier = this.tierInfo();
+    const hold = P.reload > 0 ? { label: 'RELOADING', k: P.reload } : this.sandbox?.holdK > 0 ? { label: 'BACK TO HUB', k: this.sandbox.holdK } : null;
     const st = {
-      hp: this.hp, hpMax: PLAYER_HP, cad: this.cad, el: this.el, score: this.score, wave: this.wave,
-      reload: P.reload, combo: this.combo, label: tier.label,
+      hp: this.hp, hpMax: PLAYER_HP, cad: this.cad, el: this.el, score: this.score, hold, combo: this.combo,
+      label: this.state === 'play' ? `WAVE ${this.wave}` : this.sandbox?.modeLabel || 'CADENCE', tierLabel: tier.label,
     };
     this.wrist.draw(st, now);
     this.domHud.update(st);
     const beatInBar = ((this.beat % 4) + 4) % 4;
-    this.comboHud.update(dt, P.head, P.flatFwd, this.state === 'play' ? this.combo : 0, tier.label, beatInBar, this.pulse, true);
+    this.comboHud.update(dt, P.head, P.flatFwd, this.live ? this.combo : 0, tier.label, beatInBar, this.pulse, true);
     this.vignette.update(dt, this.state === 'play' ? this.hp / PLAYER_HP : 1);
-    this.audio.tier = this.state === 'play' ? this.tierIdx + 1 : 0;
+    this.audio.tier = this.live ? this.tierIdx + 1 : 0;
   }
 
   // For the world shader: where are we in the bar?

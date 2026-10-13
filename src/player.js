@@ -59,7 +59,10 @@ export class Player {
     this.hand = { pos: new V(), vel: new V(), hist: [] };
     this.aim = { origin: new V(), dir: new V(0, 0, -1) };
 
-    this.input = { grab: false, grabDown: false, grabUp: false, pushDown: false, elemNext: false, elemPrev: false, elemSet: -1 };
+    this.input = {
+      grab: false, grabDown: false, grabUp: false, pushDown: false, elemNext: false, elemPrev: false, elemSet: -1,
+      menu: false, hubNow: false, toggleDown: false, // off-hand X (hold) / Y; desktop Esc / T
+    };
     this._prev = { sword: [], force: [] };
     this._deskPrev = { grab: false };
     this.reload = 0; this._sq = { sword: 0, force: 0 }; this._reloadArmed = false;
@@ -70,7 +73,16 @@ export class Player {
 
   _bindDesktop() {
     const k = this.keys;
-    addEventListener('keydown', (e) => { k[e.key.toLowerCase()] = true; if (e.key >= '1' && e.key <= '3') this._deskElem = +e.key - 1; if (e.key.toLowerCase() === 'e') this._deskNext = true; if (e.key.toLowerCase() === 'f') this._deskPush = true; });
+    addEventListener('keydown', (e) => {
+      const key = e.key.toLowerCase();
+      k[key] = true;
+      if (e.repeat) return;
+      if (e.key >= '1' && e.key <= '3') this._deskElem = +e.key - 1;
+      if (key === 'e') this._deskNext = true;
+      if (key === 'f') this._deskPush = true;
+      if (key === 't') this._deskToggle = true;
+      if (key === 'escape') this._deskHub = true;
+    });
     addEventListener('keyup', (e) => { k[e.key.toLowerCase()] = false; });
     addEventListener('pointermove', (e) => {
       this.mouse.x = (e.clientX / innerWidth) * 2 - 1;
@@ -85,6 +97,20 @@ export class Player {
     addEventListener('pointerup', (e) => { if (e.button === 2) this._look = false; });
     addEventListener('contextmenu', (e) => e.preventDefault());
   }
+
+  // Put the head at (x, z) facing `yaw` (0 = -Z), whatever the room-scale offset.
+  teleport(x, z, yaw = 0) {
+    const cl = this.camera.position;
+    const f = new V(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    const camYaw = Math.atan2(-f.x, -f.z);
+    const ry = yaw - camYaw, c = Math.cos(ry), s = Math.sin(ry);
+    this.rig.rotation.y = ry;
+    this.rig.position.set(x - (cl.x * c + cl.z * s), 0, z - (-cl.x * s + cl.z * c));
+    this.rig.updateMatrixWorld(true);
+    this.blade.init = false; this.blade.hist.length = 0; this.hand.hist.length = 0;
+  }
+  // Button names for the force hand (left: X/Y, right when ?lefty: A/B).
+  get btnNames() { return this.lefty ? ['A', 'B'] : ['X', 'Y']; }
 
   _src(hand) {
     const s = this.renderer.xr.getSession();
@@ -142,7 +168,7 @@ export class Player {
 
   _readInput(vr, now) {
     const I = this.input;
-    I.grabDown = I.grabUp = I.pushDown = I.elemNext = I.elemPrev = false; I.elemSet = -1;
+    I.grabDown = I.grabUp = I.pushDown = I.elemNext = I.elemPrev = I.hubNow = I.toggleDown = false; I.elemSet = -1;
     if (vr) {
       const read = (hand) => {
         const gp = this._src(hand)?.gamepad;
@@ -153,6 +179,8 @@ export class Player {
       if (edge('sword', sw, BTN.a)) I.elemNext = true;
       if (edge('sword', sw, BTN.b)) I.elemPrev = true;
       if (edge('force', fo, BTN.squeeze)) I.pushDown = true;
+      if (edge('force', fo, BTN.b)) I.toggleDown = true;   // Y on the left controller
+      I.menu = !!fo.b[BTN.a];                              // X on the left controller (hold)
       const g = !!fo.b[BTN.trigger];
       I.grabDown = g && !I.grab; I.grabUp = !g && I.grab; I.grab = g;
       // reload: squeeze both grips together and hold
@@ -171,6 +199,9 @@ export class Player {
       if (this._deskPush) { I.pushDown = true; this._deskPush = false; }
       if (this._deskNext) { I.elemNext = true; this._deskNext = false; }
       if (this._deskElem !== undefined) { I.elemSet = this._deskElem; this._deskElem = undefined; }
+      if (this._deskToggle) { I.toggleDown = true; this._deskToggle = false; }
+      if (this._deskHub) { I.hubNow = true; this._deskHub = false; }
+      I.menu = false;
     }
   }
 

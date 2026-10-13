@@ -20,6 +20,20 @@ Every action is judged against the beat: **PERFECT** (±70 ms), **GOOD** (±150 
 - **Ring outs:** an on-beat push launches enemies off the platform.
 - Add `?lefty` to the URL to swap hands.
 
+## Training hall
+
+You start in a hub. Slash a crystal to choose a mode (on desktop, use the buttons at the top left):
+
+- **PLAY**: the full wave-based game.
+- **RHYTHM**: an early/late timing chart for every hit. Press **Y** (desktop **T**) to calibrate your input offset; it's saved in the browser.
+- **BEAM**: explains every big swing (too slow, too short, off beat, too close) with speed and arc meters.
+- **FORCE**: dummies at the platform edge for grab, throw and push practice, including ring-outs.
+- **ELEMENTS**: three dummies for mixing reactions.
+- **PARRY**: a grunt that attacks every bar; counts parries, blocks, interrupts and dodges.
+- **DEFLECT**: a caster throwing an orb every bar, with timing feedback on each deflect.
+
+In the stations, ⚡ is infinite, you can't die, and dummies respawn. **Y** (desktop **T**) switches beat judging off so you can feel a mechanic on its own. Hold **X** (desktop **Esc**) to return to the hub.
+
 ## Code
 
 Plain ES modules with no build step; three.js is loaded from a CDN.
@@ -29,6 +43,7 @@ Plain ES modules with no build step; three.js is loaded from a CDN.
 - `src/game.js`: rules, combat, force, elements, waves
 - `src/enemies.js`: grunt and caster behavior
 - `src/player.js`: XR and desktop input, blade tracking, locomotion, haptics
+- `src/sandbox.js`: the hub and training stations
 - `src/models.js`, `src/world.js`, `src/fx.js`, `src/hud.js`: everything you see
 
 `?xremu` loads Meta's IWER WebXR emulator, so the VR code path can be exercised on a desktop browser.

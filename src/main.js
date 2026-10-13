@@ -5,7 +5,8 @@ import { buildWorld } from './world.js';
 import { FX } from './fx.js';
 import { Player } from './player.js';
 import { Game } from './game.js';
-import { WristDisplay, ComboHud, Board, Vignette, DomHud } from './hud.js';
+import { WristDisplay, ComboHud, Board, Vignette, DomHud, Fade } from './hud.js';
+import { Sandbox, MODES } from './sandbox.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -36,6 +37,22 @@ const game = new Game({
   vignette: new Vignette(camera),
   domHud: new DomHud(),
 });
+const fade = new Fade(camera);
+const sandbox = new Sandbox({ game, player, scene, board: game.board, fade, comboHud: game.comboHud, audio, fx });
+game.sandbox = sandbox;
+
+// desktop mode bar (in VR you slash the hub crystals instead)
+const modeBar = document.getElementById('modes');
+for (const [id, label] of MODES) {
+  const b = document.createElement('button');
+  b.textContent = label; b.dataset.mode = id;
+  b.addEventListener('pointerdown', (e) => e.stopPropagation());
+  b.addEventListener('click', () => { audio.unlock(); sandbox.enter(id); b.blur(); });
+  modeBar.appendChild(b);
+}
+const markMode = (id) => { for (const b of modeBar.children) b.classList.toggle('on', b.dataset.mode === id); };
+sandbox.onModeChange = markMode;
+markMode('hub');
 
 // --- VR entry + audio unlock (browsers only start audio after a gesture)
 const vrButton = VRButton.createButton(renderer);
@@ -52,9 +69,9 @@ renderer.xr.addEventListener('sessionstart', () => {
     if (rates.includes(90)) s.updateTargetFrameRate(90).catch(() => {});
   }
   document.body.classList.add('in-vr');
-  game.onSessionStart();
+  sandbox.onSessionStart();
 });
-renderer.xr.addEventListener('sessionend', () => { document.body.classList.remove('in-vr'); game.onSessionStart(); });
+renderer.xr.addEventListener('sessionend', () => { document.body.classList.remove('in-vr'); sandbox.onSessionStart(); });
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
@@ -78,6 +95,7 @@ renderer.setAnimationLoop(() => {
   let vh = renderer.domElement.height;
   if (renderer.xr.isPresenting) { const cams = renderer.xr.getCamera().cameras; if (cams.length && cams[0].viewport) vh = cams[0].viewport.w; }
   fx.update(dt, player.head, vh);
+  fade.update(dt);
 
   camera.getWorldDirection(_fwd);
   _up.set(0, 1, 0).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()));
@@ -88,4 +106,4 @@ renderer.setAnimationLoop(() => {
 });
 
 // handy for debugging from the console
-window.__cadence = { game, player, audio, scene, renderer, camera, fx, THREE };
+window.__cadence = { game, player, audio, scene, renderer, camera, fx, sandbox, THREE };

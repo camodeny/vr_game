@@ -17,12 +17,14 @@ export const REACH = 1.95;          // grunt strike reach (horizontal, from body
 const ENGAGE = 1.25;                 // grunts like to stand this far from you
 
 export class Enemy {
-  constructor(type, game, pos, scale) {
-    this.type = type; this.game = game;
+  // cfg (sandbox): post = anchor to hold instead of chasing, passive = never
+  // attacks, every/phase = attack on a fixed beat schedule, hp = override.
+  constructor(type, game, pos, scale, cfg = {}) {
+    this.type = type; this.game = game; this.cfg = cfg;
     this.m = type === 'grunt' ? buildGrunt() : buildCaster();
     this.root = this.m.root;
     this.root.position.copy(pos);
-    this.maxHp = (type === 'grunt' ? 60 : 40) * scale;
+    this.maxHp = cfg.hp || (type === 'grunt' ? 60 : 40) * scale;
     this.hp = this.maxHp;
     this.alive = true;
     this.state = 'spawn';
@@ -65,13 +67,13 @@ export class Enemy {
     }
     switch (this.state) {
       case 'spawn':
-        if (b >= this.until) this.state = this.type === 'grunt' ? 'chase' : 'drift';
-        break;
       case 'stagger':
-        if (b >= this.until) this.state = this.type === 'grunt' ? 'chase' : 'drift';
+        if (b >= this.until) this.state = this.type === 'grunt' ? (this.cfg.post ? 'ready' : 'chase') : 'drift';
         break;
       case 'ready':
       case 'drift':
+        if (this.cfg.passive) break;
+        if (this.cfg.every) { if (((b - (this.cfg.phase || 0)) % this.cfg.every + this.cfg.every) % this.cfg.every === 0) this._beginAttack(b); break; }
         if (--this.cooldown <= 0 && this.game.requestAttack(this)) this._beginAttack(b);
         break;
       case 'windup':
@@ -198,7 +200,11 @@ export class Enemy {
       const dx = head.x - root.position.x, dz = head.z - root.position.z;
       const dist = Math.hypot(dx, dz) || 1e-3;
       const nx = dx / dist, nz = dz / dist;
-      if (!frozen) {
+      if (!frozen && this.cfg.post) {
+        const P = this.cfg.post;
+        _v.set(P.x - root.position.x, 0, P.z - root.position.z).multiplyScalar(2.5);
+        if (_v.length() > 1.6) _v.setLength(1.6);
+      } else if (!frozen) {
         if (this.type === 'grunt') {
           if (this.state === 'chase' || this.state === 'ready' || this.state === 'recover') {
             const want = dist - ENGAGE;
@@ -350,8 +356,10 @@ export class Orb {
         this.pos.lerpVectors(this.from, this.zone, Math.max(0, k));
         this.pos.y += Math.sin(Math.max(0, k) * Math.PI) * 0.35;
       } else {
+        // past the strike zone: head for where your chest is now (step away to dodge)
+        if (!this.dir2) this.dir2 = new V(eye.x, eye.y - 0.25, eye.z).sub(this.pos).normalize();
         const spd = this.from.distanceTo(this.zone) / (this.t1 - this.t0);
-        this.pos.addScaledVector(this.dir, spd * 1.4 * dt);
+        this.pos.addScaledVector(this.dir2, spd * 1.4 * dt);
       }
       const ringK = Math.max(0, 1 - Math.max(0, k));
       this.m.ring.scale.setScalar(1 + ringK * 3.2);
