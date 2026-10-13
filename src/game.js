@@ -97,6 +97,7 @@ export class Game {
   }
 
   get live() { return this.state === 'play' || this.state === 'sandbox'; }
+  get scoring() { return this.live || this.state === 'lab'; } // combo counts (the movement lab has no combat)
   emit(type, data = {}) { this.sandbox?.event(type, data); }
 
   _resetRun() {
@@ -136,7 +137,7 @@ export class Game {
   _retier() {
     let i = 0;
     for (let k = 0; k < TIERS.length; k++) if (this.combo >= TIERS[k].at) i = k;
-    if (i > this.tierIdx && this.live) this.comboHud.message(`${TIERS[i].label} · ${TIER_NAMES[i + 1] || TIER_NAMES[i]}`, '#ffd27a', 1.6);
+    if (i > this.tierIdx && this.scoring) this.comboHud.message(`${TIERS[i].label} · ${TIER_NAMES[i + 1] || TIER_NAMES[i]}`, '#ffd27a', 1.6);
     this.tierIdx = i;
   }
   _gain(n) { this.cad = Math.min(CAD_MAX, this.cad + n); }
@@ -167,7 +168,7 @@ export class Game {
     this.pulse = Math.exp(-this.phase * 5);
     const P = this.player;
 
-    this._elements(P.input);
+    if (this.state !== 'lab') this._elements(P.input); // A/B switch moves in the lab
     if (this.live) {
       this._melee(now);
       this._beamCheck(now);
@@ -192,6 +193,7 @@ export class Game {
   }
 
   _onBeat(b) {
+    if (this.state === 'lab') { this.sandbox?.onBeat(b); this._comboTimeout(b); return; }
     if (!this.live) return;
     const down = b % 4 === 0;
     this.player.pulse('force', down ? 0.22 : 0.1, 14);   // a metronome you can feel
@@ -209,6 +211,9 @@ export class Game {
       }
     }
     if (this.held && ++this.heldBeats > 6) this._release(true);
+    this._comboTimeout(b);
+  }
+  _comboTimeout(b) {
     if (this.combo > 0 && b - this.comboBeat > COMBO_TIMEOUT_BEATS) {
       if (this.combo >= 5) this.comboHud.message('combo faded', '#8a90a8', 1.2);
       this.combo = 0; this._retier();
@@ -1063,9 +1068,9 @@ export class Game {
     this.wrist.draw(st, now);
     this.domHud.update(st);
     const beatInBar = ((this.beat % 4) + 4) % 4;
-    this.comboHud.update(dt, P.head, P.flatFwd, this.live ? this.combo : 0, tier.label, beatInBar, this.pulse, true);
+    this.comboHud.update(dt, P.head, P.flatFwd, this.scoring ? this.combo : 0, tier.label, beatInBar, this.pulse, true);
     this.vignette.update(dt, this.state === 'play' ? this.hp / PLAYER_HP : 1);
-    this.audio.tier = this.live ? this.tierIdx + 1 : 0;
+    this.audio.tier = this.scoring ? this.tierIdx + 1 : 0;
   }
 
   // For the world shader: where are we in the bar?

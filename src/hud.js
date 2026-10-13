@@ -195,7 +195,7 @@ export class Board {
     x.font = `900 112px ${FONT}`; x.fillStyle = '#ffd27a'; x.shadowColor = '#ff9a3c'; x.shadowBlur = 30;
     x.fillText('CADENCE', W / 2, 96); x.shadowBlur = 0;
     x.font = `700 32px ${FONT}`; x.fillStyle = '#c9d2ff';
-    x.fillText('TRAINING HALL — slash a crystal to choose', W / 2, 172);
+    x.fillText('TRAINING HALL — slash a crystal to choose (MOVEMENT is on your right)', W / 2, 172, W - 60);
     const rows = vr ? [
       ['SWORD', 'Slash on the beat · hold TRIGGER + swing: beam (⚡)'],
       ['A / B', 'Change element — mix two on one enemy for a reaction'],

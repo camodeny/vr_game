@@ -33,7 +33,26 @@ You start in a hub. Slash a crystal to choose a mode (on desktop, use the button
 - **PARRY**: a grunt that attacks every bar; counts parries, blocks, interrupts and dodges.
 - **DEFLECT**: a caster throwing an orb every bar, with timing feedback on each deflect.
 
+- **MOVEMENT**: a locomotion lab (details below).
+
 In the stations, ⚡ is infinite, you can't die, and dummies respawn. **Y** (desktop **T**) switches beat judging off so you can feel a mechanic on its own. Hold **X** (desktop **Esc**) to return to the hub.
+
+## Movement lab
+
+Eight ways to get around, each with a course of glowing motes to collect against the clock (best times are saved). Floating platforms ring the arena and crystal anchors sit on the monoliths. In VR, **A / B** switch moves, **Y** toggles a comfort tunnel that narrows your view at speed, and holding **X** returns to the hub. On desktop, use **1–8** or the green buttons; the VR versions are the real thing.
+
+| Move | VR | Desktop |
+|---|---|---|
+| **Stick+** | left stick; click it to sprint; really crouch while sprinting to slide | WASD, Shift sprint, C slide |
+| **Beat dash** | flick the left stick; on the beat = long dash + combo | Shift + direction |
+| **Lunge** | stab: thrust the sword fast along the blade | Space (toward the cursor) |
+| **Arm swing** | hold both triggers and pump your arms; you run where you look | hold Space |
+| **Air grab** | grip to grab the air itself, pull, let go to fling (grip-reload is off here) | — |
+| **Grapple** | point a hand or the blade at an anchor, pull that trigger; hold to reel, let go to fling | cursor + Q / left mouse |
+| **Leap + glide** | off-hand grip pushes you away from your palm; one more push in mid-air; spread your arms to glide; chop down in mid-air to ground-pound | Space, F, G, C |
+| **Sword warp** | hold the sword trigger, swing, let go to throw; pull again to warp to the sword | hold-flick-release left mouse, click |
+
+Beat-timed moves (dash, lunge, grapple, leap, warp) build your combo and the music. Fall off the edge and you're put back in the middle.
 
 ## Code
 
@@ -45,6 +64,7 @@ Plain ES modules with no build step; three.js is loaded from a CDN.
 - `src/enemies.js`: grunt and caster behavior
 - `src/player.js`: XR and desktop input, blade tracking, locomotion, haptics
 - `src/sandbox.js`: the hub and training stations
+- `src/movement.js`: the movement lab (body physics, the eight moves, courses)
 - `src/models.js`, `src/world.js`, `src/fx.js`, `src/hud.js`: everything you see
 
 `?xremu` loads Meta's IWER WebXR emulator, so the VR code path can be exercised on a desktop browser.

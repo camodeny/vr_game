@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { PERFECT, GOOD, SWING, CAD_MAX, PLAYER_HP, ELEMENTS } from './config.js';
 import { glowTexture } from './fx.js';
+import { MovementLab } from './movement.js';
 
 const V = THREE.Vector3;
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
@@ -40,8 +41,9 @@ const STATIONS = {
     name: 'DEFLECT', sub: 'slash orbs back', color: 0xff7ad0, spot: [0, 0],
     slots: [{ type: 'caster', at: [0.5, -4.4], cfg: { every: 4, phase: 0, hp: 160 } }],
   },
+  movement: { name: 'MOVEMENT', sub: 'eight ways to get around', color: 0x4ade80, spot: [0, 0], slots: [], lab: true },
 };
-const ORDER = ['rhythm', 'beam', 'force', 'elements', 'parry', 'deflect'];
+const ORDER = ['rhythm', 'beam', 'force', 'elements', 'parry', 'deflect', 'movement'];
 
 function labelSprite(name, sub, color) {
   const c = document.createElement('canvas'); c.width = 512; c.height = 160;
@@ -89,12 +91,16 @@ export class Sandbox {
     this.crystals = [buildCrystal('play', 'PLAY', 'the full game', 0xffd27a, 1.3)];
     for (const id of ORDER) { const S = STATIONS[id]; this.crystals.push(buildCrystal(id, S.name, S.sub, S.color, 1)); }
     for (const c of this.crystals) scene.add(c.group);
+    this.lab = new MovementLab({ game, player, scene, board, fade, comboHud, audio, fx });
     this._layoutHub();
     this._showHubBoard();
   }
 
   get station() { return STATIONS[this.mode] || null; }
-  get modeLabel() { return this.station ? this.station.name : this.mode === 'hub' ? 'TRAINING HALL' : 'CADENCE'; }
+  get modeLabel() {
+    if (this.mode === 'movement') return this.lab.label;
+    return this.station ? this.station.name : this.mode === 'hub' ? 'TRAINING HALL' : 'CADENCE';
+  }
 
   // ------------------------------------------------------------------ mode changes
   enter(id) {
@@ -103,6 +109,7 @@ export class Sandbox {
   }
   _enter(id) {
     const g = this.game, P = this.player;
+    this.lab.stop();
     g.clearField();
     g._resetRun();
     g.freeTiming = false;
@@ -125,6 +132,11 @@ export class Sandbox {
     }
     const S = STATIONS[id];
     P.teleport(S.spot[0], S.spot[1], 0);
+    if (S.lab) {
+      g.state = 'lab';
+      this.lab.start();
+      return;
+    }
     g.state = 'sandbox';
     for (const def of S.slots) this.slots.push({ def, enemy: null, respawnAt: g.beat + 1 });
     this.stats = { n: {}, last: null, hits: [], bars: null };
@@ -143,6 +155,7 @@ export class Sandbox {
   onSessionStart() {
     this.reposeAt = performance.now() + 500; // wait for a real headset pose
     if (this.mode === 'hub') this._showHubBoard();
+    if (this.mode === 'movement') { this.lab.dirty = true; this.lab.standH = 1.2; }
   }
   _showHubBoard() {
     this.board.hub(this.game.best, this.player.presenting, this.player.btnNames);
@@ -156,7 +169,7 @@ export class Sandbox {
       c.base.set(HUB_SPOT[0] + Math.sin(a) * r, h, HUB_SPOT[1] - Math.cos(a) * r);
     };
     place(this.crystals[0], 0, 0.9, y - 0.25);
-    [-78, -52, -26, 26, 52, 78].forEach((deg, i) => place(this.crystals[i + 1], deg, 1.05, y - 0.42));
+    [-78, -52, -26, 26, 52, 78, 104].forEach((deg, i) => place(this.crystals[i + 1], deg, 1.05, y - 0.42));
   }
 
   // ------------------------------------------------------------------ per frame
@@ -166,6 +179,7 @@ export class Sandbox {
       this.reposeAt = 0;
       const S = this.station;
       P.teleport(...(S ? S.spot : HUB_SPOT), 0);
+      if (this.mode === 'movement') { this.lab.vel.set(0, 0, 0); this.lab.grounded = true; }
       this._layoutHub();
     }
     this._crystals(dt, t, now);
@@ -176,6 +190,7 @@ export class Sandbox {
       this.holdK = this._hold / 0.6;
       if (I.hubNow || this.holdK >= 1) { this.holdK = 0; this._hold = 0; this.enter('hub'); }
     }
+    if (g.state === 'lab') { this.lab.update(dt, t, now); return; }
     if (g.state !== 'sandbox') return;
 
     g.cad = CAD_MAX; g.hp = PLAYER_HP;
@@ -185,6 +200,7 @@ export class Sandbox {
   }
 
   onBeat(b) {
+    if (this.mode === 'movement') { this.lab.onBeat(b); return; }
     for (const sl of this.slots) {
       if (sl.enemy && sl.enemy.alive) continue;
       if (sl.respawnAt === null) sl.respawnAt = b + 2;
@@ -400,4 +416,5 @@ export class Sandbox {
   }
 }
 
+export { LAB_MODES } from './movement.js';
 export const MODES = [['hub', 'Hub'], ['play', 'Play'], ...ORDER.map((id) => [id, STATIONS[id].name[0] + STATIONS[id].name.slice(1).toLowerCase()])];

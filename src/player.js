@@ -6,7 +6,7 @@ import { buildSword, buildGauntlet } from './models.js';
 
 const V = THREE.Vector3, Q = THREE.Quaternion;
 const _a = new V(), _b = new V(), _m = new THREE.Matrix4(), _q = new Q();
-const BTN = { trigger: 0, squeeze: 1, stick: 3, a: 4, b: 5 };
+export const BTN = { trigger: 0, squeeze: 1, stick: 3, a: 4, b: 5 };
 
 export class Player {
   constructor({ renderer, scene, camera, rig }) {
@@ -69,6 +69,11 @@ export class Player {
     this._deskPrev = { grab: false };
     this.reload = 0; this._sq = { sword: 0, force: 0 }; this._reloadArmed = false;
     this.vr = false;
+    // movement lab hooks: raw controller state, and a switch that hands translation over
+    this.pad = { sword: [], force: [] }; this.padPrev = { sword: [], force: [] };
+    this.stick = [0, 0];       // move stick (or WASD), before any deadzone
+    this.labMove = false;      // when set, the lab moves the rig; sticks only turn
+    this.noReload = false;     // the lab's two-handed grabs would otherwise trip the reload
   }
 
   get presenting() { return this.renderer.xr.isPresenting; }
@@ -84,6 +89,7 @@ export class Player {
       if (key === 'f') this._deskPush = true;
       if (key === 't') this._deskToggle = true;
       if (key === 'escape') this._deskHub = true;
+      if (e.key >= '1' && e.key <= '9') this._deskNum = +e.key;
     });
     addEventListener('keyup', (e) => { k[e.key.toLowerCase()] = false; });
     addEventListener('pointermove', (e) => {
@@ -171,7 +177,7 @@ export class Player {
 
   _readInput(vr, now) {
     const I = this.input;
-    I.grabDown = I.grabUp = I.pushDown = I.elemNext = I.elemPrev = I.hubNow = I.toggleDown = I.chargeDown = false; I.elemSet = -1;
+    I.grabDown = I.grabUp = I.pushDown = I.elemNext = I.elemPrev = I.hubNow = I.toggleDown = I.chargeDown = false; I.elemSet = -1; I.num = -1;
     let charge;
     if (vr) {
       const read = (hand) => {
@@ -191,11 +197,12 @@ export class Player {
       // reload: squeeze both grips together and hold
       const sq = { sword: !!sw.b[BTN.squeeze], force: !!fo.b[BTN.squeeze] };
       for (const r of ['sword', 'force']) if (sq[r] && !this._prev[r][BTN.squeeze]) this._sq[r] = now;
-      if (sq.sword && sq.force) {
+      if (sq.sword && sq.force && !this.noReload) {
         if (!this._reloadArmed && Math.abs(this._sq.sword - this._sq.force) < 400) this._reloadArmed = now;
         if (this._reloadArmed) { this.reload = (now - this._reloadArmed) / 1200; if (this.reload >= 1) location.reload(); }
       } else { this._reloadArmed = false; this.reload = 0; }
-      this._prev.sword = sw.b; this._prev.force = fo.b;
+      this.padPrev = this._prev; this.pad = { sword: sw.b, force: fo.b };
+      this._prev = { sword: sw.b, force: fo.b };
       this._axes = { sword: sw.ax, force: fo.ax };
     } else {
       const k = this.keys;
@@ -206,6 +213,7 @@ export class Player {
       if (this._deskElem !== undefined) { I.elemSet = this._deskElem; this._deskElem = undefined; }
       if (this._deskToggle) { I.toggleDown = true; this._deskToggle = false; }
       if (this._deskHub) { I.hubNow = true; this._deskHub = false; }
+      if (this._deskNum) { I.num = this._deskNum; this._deskNum = 0; }
       I.menu = false;
       charge = !!this._deskCharge;
     }
@@ -223,12 +231,14 @@ export class Player {
       [mx, my] = this._stick(this._axes?.force);
       const [tx] = this._stick(this._axes?.sword);
       if (Math.abs(tx) > 0.2) turn = -tx * TURN_SPEED * dt;
+      this.stick = [mx, my];
       if (Math.hypot(mx, my) < 0.18) mx = my = 0;
     } else {
       const k = this.keys;
       my = (k['w'] ? -1 : 0) + (k['s'] ? 1 : 0);
       mx = (k['d'] ? 1 : 0) + (k['a'] ? -1 : 0);
       turn = ((k['arrowleft'] ? 1 : 0) - (k['arrowright'] ? 1 : 0)) * TURN_SPEED * dt;
+      this.stick = [mx, my];
     }
     if (turn) {
       this.rig.updateMatrixWorld(true);
@@ -238,6 +248,7 @@ export class Player {
       this.camera.getWorldPosition(_b);
       this.rig.position.x += _a.x - _b.x; this.rig.position.z += _a.z - _b.z;
     }
+    if (this.labMove) return;
     if (mx || my) {
       this.camera.getWorldDirection(_a); _a.y = 0;
       if (_a.lengthSq() < 1e-6) _a.set(0, 0, -1); else _a.normalize();
@@ -293,6 +304,19 @@ export class Player {
     B.speed = sp > B.speed ? sp : B.speed * 0.6 + sp * 0.4;
     B.hist.push({ p: local, t: now });
     while (B.hist.length && now - B.hist[0].t > 320) B.hist.shift();
+  }
+  // Hand position in world space / rig (tracking) space.
+  handWorld(role, out) { return (role === 'sword' ? this.swordMount : this.offMount).getWorldPosition(out); }
+  handLocal(role, out) { return this.rig.worldToLocal(this.handWorld(role, out)); }
+  // Velocity of the blade tip over the last ~`ms` milliseconds (world space).
+  tipVelocity(out, ms = 70) {
+    const h = this.blade.hist;
+    out.set(0, 0, 0);
+    if (h.length < 2) return out;
+    const b = h[h.length - 1];
+    let a = h[h.length - 2];
+    for (let i = h.length - 2; i >= 0 && b.t - h[i].t <= ms; i--) a = h[i];
+    return out.subVectors(b.p, a.p).divideScalar(Math.max(1e-3, (b.t - a.t) / 1000)).applyQuaternion(this.rig.quaternion);
   }
   // Tip path length over the last `ms` milliseconds.
   arc(ms = 160) {

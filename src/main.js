@@ -6,7 +6,7 @@ import { FX } from './fx.js';
 import { Player } from './player.js';
 import { Game } from './game.js';
 import { WristDisplay, ComboHud, Board, Vignette, DomHud, Fade } from './hud.js';
-import { Sandbox, MODES } from './sandbox.js';
+import { Sandbox, MODES, LAB_MODES } from './sandbox.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -50,7 +50,21 @@ for (const [id, label] of MODES) {
   b.addEventListener('click', () => { audio.unlock(); sandbox.enter(id); b.blur(); });
   modeBar.appendChild(b);
 }
-const markMode = (id) => { for (const b of modeBar.children) b.classList.toggle('on', b.dataset.mode === id); };
+// movement lab: one button per mechanic, shown while you're in the lab
+const labBar = document.getElementById('labmodes');
+LAB_MODES.forEach((m, i) => {
+  const b = document.createElement('button');
+  b.textContent = `${i + 1} ${m.name}`;
+  b.addEventListener('pointerdown', (e) => e.stopPropagation());
+  b.addEventListener('click', () => { sandbox.lab.setMode(i); b.blur(); });
+  labBar.appendChild(b);
+});
+sandbox.lab.onModeChange = (i) => { [...labBar.children].forEach((b, k) => b.classList.toggle('on', k === i)); };
+const markMode = (id) => {
+  for (const b of modeBar.children) b.classList.toggle('on', b.dataset.mode === id);
+  labBar.style.display = id === 'movement' ? 'flex' : 'none';
+  document.body.classList.toggle('lab', id === 'movement');
+};
 sandbox.onModeChange = markMode;
 markMode('hub');
 

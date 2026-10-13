@@ -642,6 +642,74 @@ export class AudioEngine {
     const p = this.musicFilter.frequency, t = this.now;
     p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.exponentialRampToValueAtTime(20000, t + 1.2);
   }
+  // ---------------------------------------------------------------- movement lab
+  dash(strong) {
+    if (!this.running) return;
+    const t = this.now, o = this._out(null, 0.8, 0.15);
+    this._noise(t, 0.24, strong ? 0.5 : 0.3, o, { f0: 3200, f1: 500, q: 1.2, attack: 0.01 });
+    this._osc('sine', 150, 55, t, 0.14, strong ? 0.3 : 0.16, o);
+    if (strong) this._osc('triangle', hz(this.hitNote(0) + 12), hz(this.hitNote(0) + 12), t, 0.12, 0.035, o);
+  }
+  land(k) { // k 0..1: how hard
+    if (!this.running) return;
+    const t = this.now, o = this._out(null, 0.9);
+    this._osc('sine', 95, 38, t, 0.2, 0.12 + 0.45 * k, o);
+    this._noise(t, 0.16, 0.06 + 0.3 * k, o, { type: 'lowpass', f0: 900 + 1800 * k, f1: 140, q: 0.7 });
+  }
+  step(pos) {
+    if (!this.running) return;
+    const t = this.now, o = this._out(pos, 0.6);
+    this._osc('sine', 72, 44, t, 0.08, 0.14, o);
+    this._noise(t, 0.06, 0.05, o, { type: 'lowpass', f0: 700, f1: 200 });
+  }
+  grabAir(pos) {
+    if (!this.running) return;
+    const t = this.now, o = this._out(pos, 0.7, 0.2);
+    this._osc('sine', 240, 150, t, 0.07, 0.12, o);
+    this._noise(t, 0.06, 0.07, o, { f0: 2200, q: 5 });
+  }
+  zip(pos, hit) {
+    if (!this.running) return;
+    const t = this.now, o = this._out(pos, 0.8, 0.25);
+    this._osc('sawtooth', 280, 1500, t, 0.12, 0.035, o, 0.004);
+    this._noise(t, 0.16, 0.14, o, { f0: 4500, f1: 1400, q: 3 });
+    if (hit) this._bell(1760, t + 0.07, o, 0.07, 0.5);
+    else this._osc('sine', 300, 120, t + 0.08, 0.12, 0.06, o);
+  }
+  warp(strong) {
+    if (!this.running) return;
+    const t = this.now, o = this._out(null, 0.8, 0.45);
+    this._noise(t, 0.16, 0.3, o, { f0: 500, f1: 6000, q: 2, attack: 0.11 });
+    this._osc('sine', 1200, 240, t + 0.1, 0.25, 0.12, o);
+    if (strong) this._bell(hz(this.hitNote(2) + 12), t + 0.1, o, 0.08, 0.7);
+  }
+  collect(i) {
+    if (!this.running) return;
+    const t = this.now, o = this._out(null, 0.8, 0.5), scale = [0, 2, 4, 7, 9];
+    this._bell(hz(72 + scale[i % 5] + 12 * Math.floor(i / 5)), t, o, 0.12, 0.9);
+    this._noise(t, 0.12, 0.04, o, { type: 'highpass', f0: 6000 });
+  }
+  courseClear() {
+    if (!this.running) return;
+    const t = this.now, o = this._out(null, 0.8, 0.6);
+    [72, 76, 79, 84, 88].forEach((m, i) => this._bell(hz(m), t + i * 0.09, o, 0.11, 1.2));
+  }
+  // Rushing air whose loudness and brightness follow your speed.
+  wind() {
+    if (!this.running) return null;
+    const ac = this.ctx, s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+    s.buffer = this.smp.noise; s.loop = true;
+    f.type = 'bandpass'; f.Q.value = 0.8; f.frequency.value = 400; g.gain.value = 0;
+    s.connect(f).connect(g).connect(this.sfx); s.start();
+    return {
+      set: (k) => {
+        const n = this.now;
+        g.gain.setTargetAtTime(0.32 * k * k, n, 0.08);
+        f.frequency.setTargetAtTime(300 + 2200 * k, n, 0.08);
+      },
+      stop: () => { const n = this.now; g.gain.setTargetAtTime(0, n, 0.05); s.stop(n + 0.3); },
+    };
+  }
   tick(strong) { // tiny UI click
     if (!this.running) return;
     const o = this._out(null, 0.5);

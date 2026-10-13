@@ -223,7 +223,7 @@ const RING_FRAG = `
 const ringGeo = new THREE.PlaneGeometry(1, 1);
 
 // ===================================================================== lightning / tether ribbon
-class Ribbon {
+export class Ribbon {
   constructor(scene, n = 24) {
     this.n = n;
     this.pts = Array.from({ length: n }, () => new V());

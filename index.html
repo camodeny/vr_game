@@ -26,15 +26,28 @@
     font-size: 12px; line-height: 1.6; text-align: center; color: #9aa3c7; max-width: 94vw;
     background: rgba(8, 10, 22, .6); padding: 6px 16px; border-radius: 10px;
   }
-  #help b { color: #ffd27a; font-weight: 700; }
+  #help b, #labhelp b { color: #ffd27a; font-weight: 700; }
+  #labhelp {
+    position: fixed; bottom: 72px; left: 50%; transform: translateX(-50%); z-index: 10; display: none;
+    font-size: 12px; line-height: 1.6; text-align: center; color: #9aa3c7; max-width: 94vw;
+    background: rgba(8, 10, 22, .6); padding: 6px 16px; border-radius: 10px;
+  }
+  body.lab #help { display: none; }
+  body.lab #labhelp { display: block; }
   #modes { position: fixed; top: 14px; left: 14px; z-index: 11; display: flex; flex-direction: column; gap: 5px; }
   #modes button {
     font: 700 12px system-ui, -apple-system, Segoe UI, sans-serif; letter-spacing: .04em; color: #c9d2ff; text-align: left;
     background: rgba(8, 10, 22, .72); border: 1px solid rgba(255, 210, 122, .25); border-radius: 8px; padding: 5px 12px; cursor: pointer;
   }
   #modes button:hover { border-color: rgba(255, 210, 122, .7); color: #fff; }
-  #modes button.on { background: rgba(255, 210, 122, .9); color: #0b0d18; border-color: transparent; }
-  body.in-vr #hud, body.in-vr #help, body.in-vr #modes { display: none; }
+  #modes button.on, #labmodes button.on { background: rgba(255, 210, 122, .9); color: #0b0d18; border-color: transparent; }
+  #labmodes { position: fixed; top: 14px; left: 118px; z-index: 11; display: none; flex-direction: column; gap: 5px; }
+  #labmodes button {
+    font: 700 12px system-ui, -apple-system, Segoe UI, sans-serif; letter-spacing: .04em; color: #c9ffd9; text-align: left;
+    background: rgba(8, 22, 14, .72); border: 1px solid rgba(74, 222, 128, .3); border-radius: 8px; padding: 5px 12px; cursor: pointer;
+  }
+  #labmodes button:hover { border-color: rgba(74, 222, 128, .8); color: #fff; }
+  body.in-vr #hud, body.in-vr #help, body.in-vr #modes, body.in-vr #labmodes, body.in-vr #labhelp { display: none !important; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -52,9 +65,14 @@
   <span id="score">0</span>
 </div>
 <div id="modes"></div>
+<div id="labmodes"></div>
 <div id="help">
   <b>Strike on the beat.</b> Mouse = sword · hold <b>left click</b> + flick = beam · <b>Q</b> hold grab / release throw · <b>F</b> push · <b>E</b> / <b>1-3</b> element · <b>WASD</b> move · <b>← →</b> or right-drag turn<br>
   Stations: <b>T</b> toggles beat judging (Rhythm: calibrate) · <b>Esc</b> back to hub · In VR: slash a hub crystal, hold <b>X</b> to return, <b>Y</b> to toggle.
+</div>
+<div id="labhelp">
+  <b>Movement lab.</b> Each move's controls are on the panel · <b>1–8</b> or the green buttons switch moves · collect every mote against the clock<br>
+  <b>WASD</b> walk · <b>← →</b> or right-drag turn · <b>T</b> comfort tunnel · <b>Esc</b> back to hub · the VR versions are the real thing
 </div>
 <script type="module">
   // ?xremu loads a WebXR emulator (Meta IWER) so the VR path can be tested on desktop.
