@@ -55,6 +55,7 @@ function labelSprite(name, sub, color) {
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false }));
   s.scale.set(0.42, 0.131, 1);
+  s.renderOrder = 10; // draw after the (transparent) hub board behind it
   return s;
 }
 
